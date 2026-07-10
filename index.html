@@ -177,6 +177,9 @@
   .rchip button:hover{color:var(--warn)}
   tr.flash{animation:rowflash 2.6s ease-out}
   @keyframes rowflash{0%{background:#CFE9EB}55%{background:#E4F1F2}100%{background:transparent}}
+  td.dragh{cursor:grab;color:var(--muted);font-size:12px;letter-spacing:-1px;padding:7px 4px 7px 10px;user-select:none;width:22px}
+  td.dragh:active{cursor:grabbing}
+  tr.droptarget td{box-shadow:inset 0 2px 0 var(--accent)}
   .gcalrow{display:flex;gap:8px;align-items:center}
   .gcalrow select{flex:1;min-width:0}
   .share-row{display:flex;gap:10px;align-items:center;padding:5px 0;font-size:12.5px}
@@ -585,10 +588,13 @@ function itemsOf(p){
 const itemStart=it=>it.type==='task'?it.start:it.date;
 const itemEnd=it=>it.type==='task'?it.end:it.date;
 
+let SAVEDAT=0;
 async function save0(){
-  const data=JSON.stringify({v:2,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  SAVEDAT=Date.now();
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
   try{ if(window.storage&&window.storage.set) await window.storage.set('portfolio_v2',data,false); }catch(e){}
   try{ localStorage.setItem('rp_portfolio_v2',data); }catch(e){}
+  try{ scheduleCloudPush(); }catch(e){}
 }
 async function save(){
   await save0();
@@ -598,7 +604,7 @@ async function load(){
   let raw=null;
   try{ if(window.storage&&window.storage.get){const r=await window.storage.get('portfolio_v2',false);if(r&&r.value)raw=r.value;} }catch(e){}
   if(!raw){ try{ raw=localStorage.getItem('rp_portfolio_v2'); }catch(e){} }
-  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; ORG=j.org||''; ORGNAME=j.orgName||''; }catch(e){ PROJECTS=[]; } }
+  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; ORG=j.org||''; ORGNAME=j.orgName||''; SAVEDAT=j.savedAt||0; }catch(e){ PROJECTS=[]; } }
   if(!PROJECTS.length && !ARCHIVE.length) PROJECTS=[DMOSA()];
   // seed the People directory from any rosters not yet in it (dedup by email)
   const known=new Set(PEOPLE.map(x=>x.e));
@@ -836,6 +842,7 @@ function renderDetail(){
       ? `<span class="type-tag tt-${it.ttype||'task'}">${it.ttype?TASK_TYPES[it.ttype].short:'Task'}</span>`
       : `<span class="type-tag tt-${it.type}">${it.type}</span>`;
     rows+=`<tr data-rk="${it.type}:${it.key}" class="${off}${it.needs?' needsfill':''}">
+      <td class="dragh" draggable="true" title="Drag to another row — the event takes that row's date (duration/time kept)">⋮⋮</td>
       <td><input type="checkbox" class="chk" data-t="${it.type}" data-k="${it.key}" ${it.include?'checked':''}></td>
       <td>${typeCell}</td>
       <td><input type="text" data-t="${it.type}" data-k="${it.key}" data-f="label" value="${(it.label||'').replace(/"/g,'&quot;')}">${it.needs?'<span class="needbadge">fill in ✓</span>':''}</td>
@@ -856,7 +863,7 @@ function renderDetail(){
       </div>`).join('')}`;
   el('libraryWrap').innerHTML=libHTML;
   sw.innerHTML=`<div style="overflow-x:auto"><table>
-      <thead><tr><th>On</th><th>Type</th><th>Item</th><th>Date / start</th><th>Time / end</th><th>Assign</th><th>Remove</th></tr></thead>
+      <thead><tr><th></th><th>On</th><th>Type</th><th>Item</th><th>Date / start</th><th>Time / end</th><th>Assign</th><th>Remove</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="addrow">
       <button class="btn sm" data-add="meeting">+ Meeting</button>
@@ -899,7 +906,33 @@ function renderDetail(){
     p.tasks.push({key:newKey('t'),label:src.label+' (copy)',start:src.start,end:src.end,include:true,desc:src.desc||'',ttype:src.ttype||'concept',att:(src.att||[]).map(a=>({...a})),needs:true});
     save();renderAll();toast('Task duplicated — edit the copy');
   });
-  sw.querySelectorAll('[data-asg]').forEach(b=>b.onclick=e=>{const r=b.getBoundingClientRect();openEventPopover(p,b.dataset.asgt||'task',b.dataset.asg,r.left,r.bottom);});
+  sw.querySelectorAll('[data-asg]').forEach(b=>b.onclick=e=>{const r=b.getBoundingClientRect();toggleEventPopover(p,b.dataset.asgt||'task',b.dataset.asg,r.left,r.bottom);});
+  /* --- drag a row onto another: take that row's date, keep duration & time --- */
+  let dragRk=null;
+  sw.querySelectorAll('tr[data-rk]').forEach(tr=>{
+    const h=tr.querySelector('.dragh'); if(!h) return;
+    h.ondragstart=e=>{ dragRk=tr.dataset.rk; try{e.dataTransfer.setData('text/plain',dragRk);e.dataTransfer.effectAllowed='move';}catch(_){}} ;
+    tr.ondragover=e=>{ if(!dragRk||dragRk===tr.dataset.rk) return; e.preventDefault(); tr.classList.add('droptarget'); };
+    tr.ondragleave=()=>tr.classList.remove('droptarget');
+    tr.ondrop=e=>{
+      e.preventDefault(); tr.classList.remove('droptarget');
+      const src=dragRk; dragRk=null; if(!src||src===tr.dataset.rk) return;
+      const [st,sk]=src.split(':'), [tt2,tk2]=tr.dataset.rk.split(':');
+      const sArr=arr(st), tArr=arr(tt2);
+      const sIt=sArr&&sArr.find(x=>x.key===sk), tIt=tArr&&tArr.find(x=>x.key===tk2);
+      if(!sIt||!tIt) return;
+      let nd=tt2==='task'?tIt.start:tIt.date;                 // adopt the target row's date
+      if(st==='task'){
+        const dur=daysBetween(sIt.start,sIt.end);
+        sIt.start=nd; sIt.end=addDays(nd,dur);                // duration preserved
+      }else{
+        if(st==='meeting') nd=snapDow(nd,p.meetDow);          // meetings stay on meeting day
+        sIt.date=nd;                                          // time-of-day untouched
+      }
+      touch(sIt); save(); renderAll(); highlightRow(st,sk);
+      toast(`Moved to ${fmt(st==='task'?sIt.start:sIt.date)} — duration & time kept`);
+    };
+  });
   sw.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
     const t=b.dataset.add, a=arr(t);
     if(t==='task')a.push({key:newKey('t'),label:'New task',start:p.anchor,end:addDays(p.anchor,7),include:true,desc:'',ttype:'concept',att:[],needs:true});
@@ -945,12 +978,12 @@ function renderDetail(){
     <div class="field"><label>Project Group — invited to every meeting &amp; deadline (and pick from here to assign tasks). One profile per person across all projects.</label>${rr}</div>
    </div>
    <div>
-    <div class="field"><label>Category to create in Outlook first</label>
+    <div class="field"><label>Google tag — every event's title starts with this</label>
       <div style="display:flex;gap:8px;align-items:center">
-        <code style="flex:1;font-family:var(--mono);font-size:13px;background:var(--warn-soft);border:1px solid #EAD3BC;color:var(--warn);padding:8px 10px;border-radius:8px">${p.tag}</code>
+        <code style="flex:1;font-family:var(--mono);font-size:13px;background:var(--accent-soft);border:1px solid #C6E0E2;color:var(--accent);padding:8px 10px;border-radius:8px">[${p.tag}]</code>
         <button class="btn sm" id="copyTag">Copy</button>
       </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Create this category in Outlook (with your colour) <b>before</b> importing.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Events also take the project colour in Google Calendar. Create an event directly in Google Calendar titled <b>[${p.tag}] …</b> and the app adopts it into this project automatically.</div>
     </div>
     <div class="field"><label>Google Calendar — this project syncs to:</label>
       <div class="gcalrow">
@@ -967,7 +1000,7 @@ function renderDetail(){
       <div id="exportHint" style="font-size:11.5px;color:var(--warn);margin-top:6px"></div>
       ${(p.deleted||[]).length?`<div style="font-size:11.5px;color:var(--muted);margin-top:6px">🗑 ${p.deleted.length} deleted event${p.deleted.length>1?'s':''} queued as a cancellation file in the zip (import it last to remove them from Outlook). <a href="#" id="clearCancel" style="color:var(--accent)">clear</a></div>`:''}
     </div>
-    <div class="note">This packages a small <b>.zip</b> with the two files you import into Outlook: <b>invited</b> (meetings, deadlines, and any <b>tasks you assigned people to</b> — import, then Send) and <b>private</b> (unassigned work blocks, your calendar only), plus a README with the exact category names and steps. Use <b>⤓ Export all for Outlook</b> at the top to get every project in one zip. Reminders (1&nbsp;week + 1&nbsp;day) are on everything invited.</div>
+    <div class="note"><b>Backup only</b> — everything above syncs live to Google Calendar; you don't need these files. The .zip is a legacy <b>.ics</b> export for importing into Outlook manually (invited + private files, README with steps). Requires the project to be locked.</div>
     <div class="field" style="margin-top:14px"><label>Import changed events (.ics)</label>
       <div class="dropzone" id="dropzone">Drag an <b>.ics</b> here (or click) — from Outlook: open the changed event → <b>Save as → iCalendar</b>. The console matches it by ID and shows what changed before applying.</div>
       <input type="file" id="dropInput" accept=".ics" hidden>
@@ -991,7 +1024,7 @@ function renderDetail(){
   const mp=el('managePeople'); if(mp) mp.onclick=openPeople;
   el('fOrg').onchange=e=>{ORG=e.target.value.trim();save();};
   el('fOrgName').onchange=e=>{ORGNAME=e.target.value.trim();save();};
-  el('copyTag').onclick=()=>{const t=p.tag;(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Category "'+t+'" copied')).catch(()=>toast('Category: '+t));};
+  el('copyTag').onclick=()=>{const t=p.tag;(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Tag "['+t+']" copied')).catch(()=>toast('Tag: ['+t+']'));};
   const dz=el('dropzone'), di=el('dropInput');
   if(dz){
     dz.onclick=()=>di.click();
@@ -1513,7 +1546,7 @@ function showPlanCard(plan){
   const card=document.createElement('div');card.className='plancard';
   card.innerHTML=`<div class="ph"><span class="chip">${esc2(plan.guideline||'—')}</span><b>${esc2(plan.studyType||plan.name||'Study')}</b><br>
       ${esc2(proj.name)} · start ${fmt(proj.anchor)} → submit ${fmt(plan.submission||'')}<br>
-      <span style="color:var(--warn)">Create category in Outlook first: <b>${esc2(proj.tag)}</b></span></div>
+      <span style="color:var(--accent)">Google tag: <b>[${esc2(proj.tag)}]</b></span></div>
     <div class="pb">${rows}</div>
     <div class="pf"><button class="btn primary sm" id="applyPlan">Add to timeline</button>
       <button class="btn sm" id="discardPlan">Discard</button></div>`;
@@ -1541,7 +1574,7 @@ async function sendChat(){
     else if(!preface) addUI('bot',esc2(reply));
   }catch(e){
     typing.remove();
-    addUI('sys','The assistant needs to run inside Claude.ai to reach the model. Everything else in this console (timeline, editing, Outlook export) works offline — but the chat planner is only available when you open this page within Claude.ai.');
+    addUI('sys','The assistant needs to run inside Claude.ai to reach the model. Everything else in this console (timeline, editing, backups) works offline — but the chat planner is only available when you open this page within Claude.ai.');
   }
 }
 function openDrawer(){
@@ -1684,7 +1717,19 @@ function ganttPointerUp(e){
   el('dragLbl').classList.remove('show');
   const d=drag; drag=null; if(!d) return;
   if(d.node) d.node.classList.remove('dragging');
-  if(d.moved<4){ selId=d.p.id; renderDetail(); openEventPopover(d.p,d.type,d.key,e.clientX,e.clientY); highlightRow(d.type,d.key); return; }
+  if(d.moved<4){
+    selId=d.p.id; renderDetail();
+    const now=Date.now(), sig=d.type+':'+d.key;
+    if(window._lastClick && window._lastClick.sig===sig && now-window._lastClick.t<400){
+      window._lastClick=null;
+      openEventPopover(d.p,d.type,d.key,e.clientX,e.clientY);   // double-click = edit
+    }else{
+      window._lastClick={sig,t:now};
+      closePopover();
+      highlightRow(d.type,d.key);                               // single click = highlight in the list
+    }
+    return;
+  }
   const ddx=d.ddx||0, ddy=(d.type==='task'&&d.mode==='move')?(d.ddy||0):0;
   const {item}=getItem(d.p,d.type,d.key);
   if(item && (ddx!==0||ddy!==0)){
@@ -1704,7 +1749,12 @@ function ganttPointerUp(e){
   }
   renderAll();
 }
-function closePopover(){ const p=el('eventPop'); if(p) p.classList.remove('show'); }
+function closePopover(){ const p=el('eventPop'); if(p) p.classList.remove('show'); window._popKey=null; }
+function toggleEventPopover(p,type,key,cx,cy){
+  const sig=p.id+':'+type+':'+key;
+  if(window._popKey===sig){ closePopover(); return; }   // pressing Assign again closes it
+  openEventPopover(p,type,key,cx,cy);
+}
 function highlightRow(type,key){
   const sw=el('scheduleWrap'); if(!sw||!sw.querySelector) return;
   const row=sw.querySelector(`[data-rk="${type}:${key}"]`); if(!row) return;
@@ -1730,6 +1780,7 @@ function openEventPopover(p,type,key,cx,cy){
   pop.style.left=Math.min(cx,innerWidth-292)+'px';
   pop.style.top=Math.max(8,Math.min(cy+12,innerHeight-320))+'px';
   pop.classList.add('show');
+  window._popKey=p.id+':'+type+':'+key;
   const upd=()=>{ touch(item); save(); renderGantt(); renderUpcoming(); renderDetail(); };
   el('epL').onchange=e=>{item.label=e.target.value;upd();};
   const note=el('epNote');
@@ -1810,7 +1861,7 @@ function gInitWhenLoaded(){
     if(window.gapi && window.google && google.accounts){
       clearInterval(t);
       gapi.load('client',async()=>{
-        await gapi.client.init({discoveryDocs:['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest']});
+        await gapi.client.init({discoveryDocs:['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest','https://www.googleapis.com/discovery/v1/apis/drive/v3/rest']});
         gReady=true; renderAuth();
       });
     }
@@ -1833,7 +1884,7 @@ function renderAuth(){
     el('gSignIn').onclick=()=>{
       tokenClient=tokenClient||google.accounts.oauth2.initTokenClient({
         client_id:clientId(),
-        scope:'https://www.googleapis.com/auth/calendar',
+        scope:'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.appdata',
         callback:async r=>{
           if(r&&r.access_token){ gToken=r.access_token; gapi.client.setToken({access_token:gToken});
             await afterSignIn(); }
@@ -1852,6 +1903,7 @@ async function afterSignIn(){
     gCals=(cl.result.items||[]).map(c=>({id:c.id,name:c.summary,primary:!!c.primary}));
     const prim=gCals.find(c=>c.primary); gEmail=prim?prim.id:'';
   }catch(e){ toast('Could not load calendars: '+gErr(e)); }
+  await cloudSync(true);   // pull your portfolio from your Google account (or back it up if local is newer)
   renderAuth(); renderProjects();
   startPolling();
 }
@@ -1966,8 +2018,8 @@ async function gFullSync(p){   // full sync — runs when ⚡ Live is switched O
   const clashes=[];
   PROJECTS.filter(x=>x.id!==p.id).forEach(x=>(x.meetings||[]).filter(m=>m.include).forEach(m=>{ if(mine.includes(m.date+'|'+m.time)) clashes.push(`${fmt(m.date)} ${m.time} vs [${x.tag}]`); }));
   if(clashes.length && !confirm(`⚠ Meeting time clash with other projects:\n${[...new Set(clashes)].join('\n')}\n\nSync anyway?`)) return false;
-  const ops=gPlan(p);
-  if(!ops.length){ return true; }
+  const ops=gChangedOps(p);   // only new / changed / deleted items — unchanged events are never re-sent
+  if(!ops.length){ toast(`☁ ${p.tag}: already up to date — nothing re-sent`); return true; }
   const {done,fail}=await gExec(p,ops,el('pushHint'));
   await save0();
   toast(fail?`Synced with ${fail} error(s) — check sign-in and try again`:`☁ ${p.tag}: ${done} events synced — invites & updates sent automatically`);
@@ -2049,6 +2101,76 @@ function wireGcalControls(p){
 }
 gInitWhenLoaded();
 /* =================== END GOOGLE LAYER =================== */
+
+/* =================== CLOUD SYNC (Google Drive appData) ===================
+   Your whole portfolio — projects with live/locked state, people, archive,
+   settings — lives in a hidden app-data file in YOUR Google account.
+   Any browser you sign into pulls it down; every change saves back up.
+   Conflict rule: last write wins (by savedAt timestamp). */
+const CLOUD_NAME='rpm_portfolio.json';
+let cloudFileId=null, cloudTimer=null, cloudBusy=false, cloudOK=false;
+
+async function cloudFind(){
+  if(cloudFileId) return cloudFileId;
+  const r=await gapi.client.drive.files.list({spaces:'appDataFolder',q:`name='${CLOUD_NAME}'`,fields:'files(id,name)'});
+  const f=(r.result.files||[])[0];
+  if(f){ cloudFileId=f.id; return cloudFileId; }
+  const c=await gapi.client.drive.files.create({resource:{name:CLOUD_NAME,parents:['appDataFolder']},fields:'id'});
+  cloudFileId=c.result.id; return cloudFileId;
+}
+async function cloudRead(){
+  const id=await cloudFind();
+  const r=await gapi.client.request({path:'/drive/v3/files/'+id,params:{alt:'media'}});
+  if(!r.body) return null;
+  try{ return JSON.parse(r.body); }catch(e){ return null; }
+}
+async function cloudWrite(){
+  const id=await cloudFind();
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  await gapi.client.request({path:'/upload/drive/v3/files/'+id,method:'PATCH',params:{uploadType:'media'},body:data});
+}
+function adoptCloud(j){
+  PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[];
+  ORG=j.org||ORG; ORGNAME=j.orgName||ORGNAME; SAVEDAT=j.savedAt||Date.now();
+  if(!PROJECTS.some(p=>p.id===selId)) selId=(PROJECTS[0]&&PROJECTS[0].id)||null;
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  try{ localStorage.setItem('rp_portfolio_v2',data); }catch(e){}
+}
+async function cloudSync(initial){   // pull-or-push depending on who's newer
+  if(!gToken) return;
+  if(cloudBusy) return; cloudBusy=true;
+  try{
+    const remote=await cloudRead();
+    const remoteAt=(remote&&remote.savedAt)||0;
+    const remoteHas=remote && ((remote.projects||[]).length+((remote.archive||[]).length))>0;
+    let seen=false; try{ seen=localStorage.getItem('rp_cloud_seen')==='1'; }catch(e){}
+    if(remoteHas && (!seen || remoteAt>SAVEDAT)){
+      // fresh device (never synced) always adopts the cloud; otherwise newest wins
+      adoptCloud(remote); renderAll();
+      if(initial) toast('☁ Portfolio loaded from your Google account');
+    }else if(SAVEDAT>remoteAt){
+      await cloudWrite();
+      if(initial) toast('☁ Portfolio backed up to your Google account');
+    }
+    try{ localStorage.setItem('rp_cloud_seen','1'); }catch(e){}
+    cloudOK=true;
+  }catch(e){
+    cloudOK=false;
+    if(initial){
+      const msg=gErr(e);
+      if(e&&(e.status===403||/has not been used|disabled/i.test(msg)))
+        toast('⚠ Cross-device sync needs the Google Drive API enabled — see README');
+      else if(e&&e.status===401){}
+      else toast('⚠ Cloud sync unavailable: '+msg);
+    }
+  }finally{ cloudBusy=false; }
+}
+function scheduleCloudPush(){
+  if(!gToken) return;
+  clearTimeout(cloudTimer);
+  cloudTimer=setTimeout(async()=>{ try{ await cloudWrite(); cloudOK=true; }catch(e){ cloudOK=false; } },3000);
+}
+/* =================== END CLOUD SYNC =================== */
 
 /* =================== PEOPLE DIRECTORY =================== */
 function addPerson(n,e){
@@ -2227,6 +2349,7 @@ async function gPoll(){
     });
   }
   if(any){ await save0(); renderAll(); }
+  await cloudSync(false);   // pick up portfolio changes made in another browser/device
 }
 function rsvpClass(it){
   const rs=it.rsvp; if(!rs) return '';
