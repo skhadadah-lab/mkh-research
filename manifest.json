@@ -1,6 +1,6 @@
 {
-  "name": "MKH Research Console",
-  "short_name": "MKH Research",
+  "name": "Research Project Manager",
+  "short_name": "Research PM",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F2F5F7",

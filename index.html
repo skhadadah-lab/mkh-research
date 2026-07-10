@@ -3,7 +3,7 @@
 <meta name="theme-color" content="#127884">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>MKH Research Console</title>
+<title>Research Project Manager</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js" async defer></script>
 <script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}</script>
@@ -150,6 +150,31 @@
   .projbar .pbname{font-weight:650;font-size:14px}
   .projbar .pbsub{font-family:var(--mono);font-size:11px;color:var(--muted)}
   .up-who{margin-left:8px;font-size:11px;color:var(--accent);font-weight:600;white-space:nowrap}
+  .up-rsvp{margin-left:8px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:6px;background:var(--line2);color:var(--muted);white-space:nowrap}
+  .up-rsvp.rsvp-ok{background:#DDF3E4;color:#1B7A3D}
+  .up-rsvp.rsvp-wait{background:#FFF3D6;color:#8A6100}
+  .up-rsvp.rsvp-bad{background:#FBE3E1;color:#B02E24}
+  .gfilters{display:flex;flex-wrap:wrap;gap:7px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line)}
+  .gfilters:empty{display:none}
+  .fchip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:4px 11px;border:1px solid var(--line2);border-radius:999px;background:var(--panel);cursor:pointer;color:var(--ink)}
+  .fchip .swatch{width:9px;height:9px;border-radius:3px}
+  .fchip.off{opacity:.38;text-decoration:line-through}
+  .fsep{width:1px;height:18px;background:var(--line);margin:0 3px}
+  .wknd{position:absolute;top:0;bottom:0;background:rgba(20,33,45,.035)}
+  .bar .prog{position:absolute;left:0;top:0;bottom:0;background:currentColor;opacity:.16;border-radius:5px 0 0 5px;pointer-events:none}
+  .bar.rsvp-ok{border-bottom:2px solid #2EA356}
+  .bar.rsvp-wait{border-bottom:2px solid #E8B73A}
+  .bar.rsvp-bad{border-bottom:2px solid #D64540}
+  .pin.rsvp-ok .dot{outline:2px solid #2EA356;outline-offset:1px}
+  .pin.rsvp-wait .dot{outline:2px solid #E8B73A;outline-offset:1px}
+  .pin.rsvp-bad .dot{outline:2px solid #D64540;outline-offset:1px}
+  .flag.rsvp-bad .tri{filter:drop-shadow(0 0 2px #D64540)}
+  .gmiss{opacity:.45;filter:saturate(.3)}
+  .mlabel{position:absolute;left:10px;top:-3px;font-size:9.5px;font-weight:600;color:inherit;white-space:nowrap;pointer-events:none;opacity:.85}
+  .rchips{display:flex;flex-wrap:wrap;gap:7px}
+  .rchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border:1px solid var(--line2);border-radius:999px;background:var(--panel)}
+  .rchip button{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0}
+  .rchip button:hover{color:var(--warn)}
   .gcalrow{display:flex;gap:8px;align-items:center}
   .gcalrow select{flex:1;min-width:0}
   .share-row{display:flex;gap:10px;align-items:center;padding:5px 0;font-size:12.5px}
@@ -246,11 +271,13 @@
 </style>
 
 <header class="top">
-  <div class="brand"><span class="k">Research Ops</span><h1>MKH Console</h1></div>
+  <div class="brand"><span class="k">Research Ops</span><h1>Research Project Manager</h1></div>
   <span id="collide" class="pill ok">No clashes</span>
   <div class="spacer"></div>
   <span id="gAuth"></span>
   <label class="pill" style="gap:8px">View <select id="viewSel" style="border:none;padding:2px 4px"></select></label>
+  <button class="btn ghost sm" id="undoBtn" title="Undo the last remove/delete">↩ Undo</button>
+  <button class="btn sm" id="peopleBtn" title="One profile per person, shared across projects">👥 People</button>
   <button class="btn sm" id="saveJson">Save file</button>
   <button class="btn sm" id="loadJson">Load file</button>
   <input type="file" id="fileIn" accept=".json" hidden>
@@ -277,10 +304,15 @@
     <div class="panel-h">
       <h2>Timeline</h2><span class="sub" id="rangeLbl"></span>
       <div class="spacer"></div>
+      <button class="btn ghost sm" id="presetW" title="Week view">W</button>
+      <button class="btn ghost sm" id="presetM" title="Month view">M</button>
+      <button class="btn ghost sm" id="presetQ" title="Quarter view">Q</button>
+      <button class="btn sm" id="todayBtn">◎ Today</button>
       <button class="btn ghost sm" id="zoomOut">–</button>
       <span class="sub mono" id="zoomLbl"></span>
       <button class="btn ghost sm" id="zoomIn">+</button>
     </div>
+    <div class="gfilters" id="gFilters"></div>
     <div id="ganttWrap"><div class="gantt" id="gantt"></div></div>
     <div class="legend">
       <span><i style="width:14px;height:10px;border-radius:3px;background:#0E9AA7;display:inline-block"></i> Study Concept task</span>
@@ -298,7 +330,18 @@
   </section>
 
   <div id="projectsList" style="margin-top:22px"></div>
+
+  <section class="panel" id="archivePanel" style="margin-top:22px;display:none">
+    <div class="panel-h"><h2>Old / Completed projects</h2><span class="sub">removed from the calendar · restore anytime</span></div>
+    <div id="archiveWrap"></div>
+  </section>
 </main>
+
+<div class="overlay" id="peopleOv"><div class="modal" style="max-width:560px">
+  <div class="modal-h"><h2>👥 People directory</h2></div>
+  <div class="modal-b" id="peopleBody"></div>
+  <div class="modal-f"><button class="btn primary sm" id="peopleClose">Done</button></div>
+</div></div>
 
 <div class="overlay" id="overlay"><div class="modal">
   <div class="modal-h"><h2>New project — set the key milestones</h2></div>
@@ -361,8 +404,10 @@ const TASK_CAT=[
 ];
 const PALETTE=['#2E9E5B','#2F6DB5','#D98A0B','#7A4FB5','#C0453B','#14808A','#B5459A','#7E8A2E'];
 
-let PROJECTS=[], selId=null, viewFilter='all', DAYW=18, ORG='', ORGNAME='';
+let PROJECTS=[], ARCHIVE=[], PEOPLE=[], selId=null, viewFilter='all', DAYW=18, ORG='', ORGNAME='';
 let upName='', upProj='', upType='';   // Upcoming panel filters
+let hiddenProj=new Set(), showTypes={meeting:true,deadline:true,task:true};   // timeline filters
+let UNDO=null;   // last destructive action
 
 /* auto-fit a schedule between start (primary meeting) and submission (final) */
 function autoSchedule(cfg){
@@ -536,23 +581,30 @@ function itemsOf(p){
 const itemStart=it=>it.type==='task'?it.start:it.date;
 const itemEnd=it=>it.type==='task'?it.end:it.date;
 
-async function save(){
-  const data=JSON.stringify({v:2,projects:PROJECTS,org:ORG,orgName:ORGNAME});
+async function save0(){
+  const data=JSON.stringify({v:2,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
   try{ if(window.storage&&window.storage.set) await window.storage.set('portfolio_v2',data,false); }catch(e){}
   try{ localStorage.setItem('rp_portfolio_v2',data); }catch(e){}
+}
+async function save(){
+  await save0();
+  try{ scheduleLiveSync(); }catch(e){}
 }
 async function load(){
   let raw=null;
   try{ if(window.storage&&window.storage.get){const r=await window.storage.get('portfolio_v2',false);if(r&&r.value)raw=r.value;} }catch(e){}
   if(!raw){ try{ raw=localStorage.getItem('rp_portfolio_v2'); }catch(e){} }
-  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ORG=j.org||''; ORGNAME=j.orgName||''; }catch(e){ PROJECTS=[]; } }
-  if(!PROJECTS.length) PROJECTS=[DMOSA()];
-  selId=PROJECTS[0].id;
+  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; ORG=j.org||''; ORGNAME=j.orgName||''; }catch(e){ PROJECTS=[]; } }
+  if(!PROJECTS.length && !ARCHIVE.length) PROJECTS=[DMOSA()];
+  // seed the People directory from any rosters not yet in it (dedup by email)
+  const known=new Set(PEOPLE.map(x=>x.e));
+  [...PROJECTS,...ARCHIVE].forEach(p=>(p.roster||[]).forEach(m=>{ if(m.e&&!known.has(m.e)){ PEOPLE.push({n:m.n||'',e:m.e}); known.add(m.e); } }));
+  selId=(PROJECTS[0]&&PROJECTS[0].id)||null;
 }
 
 const el=id=>document.getElementById(id);
 const hex2rgba=(h,a)=>{const n=parseInt(h.slice(1),16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`};
-function visibleProjects(){return viewFilter==='all'?PROJECTS:PROJECTS.filter(p=>p.id===viewFilter)}
+function visibleProjects(){const base=viewFilter==='all'?PROJECTS:PROJECTS.filter(p=>p.id===viewFilter);return viewFilter==='all'?base.filter(p=>!hiddenProj.has(p.id)):base;}
 const laneLabelW=()=>window.innerWidth<620?120:200;
 
 function bounds(){
@@ -572,6 +624,19 @@ function collisionMap(){
   return clash;
 }
 
+function renderGanttFilters(){
+  const f=el('gFilters'); if(!f) return;
+  if(viewFilter!=='all'||PROJECTS.length<2){ f.innerHTML=PROJECTS.length?typeChipsHTML():''; wireGanttFilters(f); return; }
+  f.innerHTML=PROJECTS.map(p=>`<button class="fchip${hiddenProj.has(p.id)?' off':''}" data-fp="${p.id}"><span class="swatch" style="background:${p.color}"></span>${p.tag}</button>`).join('')+'<span class="fsep"></span>'+typeChipsHTML();
+  wireGanttFilters(f);
+}
+function typeChipsHTML(){
+  return [['meeting','Meetings'],['deadline','Deadlines'],['task','Tasks']].map(([k,l])=>`<button class="fchip${showTypes[k]?'':' off'}" data-ft="${k}">${l}</button>`).join('');
+}
+function wireGanttFilters(f){
+  f.querySelectorAll('[data-fp]').forEach(b=>b.onclick=()=>{const id=b.dataset.fp;hiddenProj.has(id)?hiddenProj.delete(id):hiddenProj.add(id);renderGantt();});
+  f.querySelectorAll('[data-ft]').forEach(b=>b.onclick=()=>{showTypes[b.dataset.ft]=!showTypes[b.dataset.ft];renderGantt();});
+}
 function renderGantt(){
   const g=el('gantt'), {min,max}=bounds();
   const total=daysBetween(min,max)+1, trackW=total*DAYW, LW=laneLabelW();
@@ -596,7 +661,9 @@ function renderGantt(){
   }
   cur=min;
   while(parse(cur)<=parse(max)){ if(dow(cur)===1){const x=daysBetween(min,cur)*DAYW;bands+=`<div class="wk" style="left:${x}px"></div>`;} cur=addDays(cur,1); }
+  if(DAYW>=9){ cur=min; while(parse(cur)<=parse(max)){ const dw=dow(cur); if(dw===5){const x=daysBetween(min,cur)*DAYW;bands+=`<div class="wknd" style="left:${x}px;width:${DAYW*2}px"></div>`;} cur=addDays(cur,1); } }
   bands+='</div>';
+  renderGanttFilters();
 
   let axis='<div class="axis" style="width:'+(LW+trackW)+'px">';
   cur=min;
@@ -628,7 +695,8 @@ function renderGantt(){
       L.tasks.arr.forEach(t=>{
         const w=Math.max(t.b-t.a,7), y=12+t.row*24, showLbl=w>60, tc=taskColor(p,t);
         const asg=(t.att||[]).some(a=>a.e)?'<span class="asg"></span>':'';
-        marks+=`<div class="bar${t.needs?' needsfill':''}" data-pid="${p.id}" data-type="task" data-key="${t.key}" data-tip="${tipData(p,t)}" style="left:${t.a}px;width:${w}px;height:18px;top:${y}px;background:linear-gradient(180deg,${hex2rgba(tc,.26)},${hex2rgba(tc,.13)});color:${tc}"><span class="cap l"></span><span class="grip l"></span>${showLbl?`<span class="lbl">${t.label}</span>`:''}${asg}<span class="grip r"></span><span class="cap r"></span></div>`;
+        const prog=progressHTML(t,w);
+        marks+=`<div class="bar${t.needs?' needsfill':''}${rsvpClass(t)}${t.gmissing?' gmiss':''}" data-pid="${p.id}" data-type="task" data-key="${t.key}" data-tip="${tipData(p,t)}" style="left:${t.a}px;width:${w}px;height:18px;top:${y}px;background:linear-gradient(180deg,${hex2rgba(tc,.26)},${hex2rgba(tc,.13)});color:${tc}">${prog}<span class="cap l"></span><span class="grip l"></span>${showLbl?`<span class="lbl">${t.label}</span>`:''}${asg}<span class="grip r"></span><span class="cap r"></span></div>`;
       });
       L.meets.forEach(m=>{
         const cc=(clash[m.date+'|'+m.time]&&clash[m.date+'|'+m.time].length>1)?' collide':'';
@@ -682,9 +750,9 @@ function packRows(items){
 }
 const TYPE_ORDER=['concept','data','manuscript'];
 function layoutLane(p,min){
-  const tasks=(p.tasks||[]).filter(t=>t.include).map(t=>({...t,type:'task',a:daysBetween(min,t.start)*DAYW,b:(daysBetween(min,t.end)+1)*DAYW}));
-  const meets=(p.meetings||[]).filter(m=>m.include).map(m=>({...m,type:'meeting',c:daysBetween(min,m.date)*DAYW+DAYW/2}));
-  const ddls=(p.deadlines||[]).filter(m=>m.include).map(m=>({...m,type:'deadline',c:daysBetween(min,m.date)*DAYW+DAYW/2}));
+  const tasks=showTypes.task?(p.tasks||[]).filter(t=>t.include).map(t=>({...t,type:'task',a:daysBetween(min,t.start)*DAYW,b:(daysBetween(min,t.end)+1)*DAYW})):[];
+  const meets=showTypes.meeting?(p.meetings||[]).filter(m=>m.include).map(m=>({...m,type:'meeting',c:daysBetween(min,m.date)*DAYW+DAYW/2})):[];
+  const ddls=showTypes.deadline?(p.deadlines||[]).filter(m=>m.include).map(m=>({...m,type:'deadline',c:daysBetween(min,m.date)*DAYW+DAYW/2})):[];
   // one lane-row per task TYPE that is present, in fixed order
   const present=TYPE_ORDER.filter(tt=>tasks.some(t=>(t.ttype||'concept')===tt));
   const rowOf={}; present.forEach((tt,i)=>rowOf[tt]=i);
@@ -700,19 +768,26 @@ function currentPhase(p){
   const t=(p.tasks||[]).filter(x=>x.include).find(x=>parse(x.start)<=parse(ti)&&parse(ti)<=parse(x.end));
   return t?t.label.replace(/\s*\(.*\)/,''):'';
 }
+function progressHTML(t,w){
+  const ti=todayIso();
+  if(parse(t.start)>parse(ti)||parse(ti)>parse(t.end)) return '';
+  const frac=(daysBetween(t.start,ti)+1)/(daysBetween(t.start,t.end)+1);
+  return `<span class="prog" style="width:${Math.round(Math.min(1,Math.max(0,frac))*w)}px"></span>`;
+}
 function renderItemRow(p,it,min,H,clash){
-  const x=daysBetween(min,itemStart(it))*DAYW; const nf=it.needs?' needsfill':'';
+  const x=daysBetween(min,itemStart(it))*DAYW; const nf=it.needs?' needsfill':''; const gm=it.gmissing?' gmiss':'';
   if(it.type==='task'){
     const w=Math.max((daysBetween(it.start,it.end)+1)*DAYW,7), bh=18, top=(H-bh)/2, tc=taskColor(p,it);
     const asg=(it.att||[]).some(a=>a.e)?'<span class="asg"></span>':'';
-    return `<div class="bar${nf}" data-pid="${p.id}" data-type="task" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${x}px;width:${w}px;height:${bh}px;top:${top}px;background:linear-gradient(180deg,${hex2rgba(tc,.24)},${hex2rgba(tc,.14)});color:${tc}"><span class="cap l"></span><span class="grip l"></span>${asg}<span class="grip r"></span><span class="cap r"></span></div>`;
+    return `<div class="bar${nf}${rsvpClass(it)}${gm}" data-pid="${p.id}" data-type="task" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${x}px;width:${w}px;height:${bh}px;top:${top}px;background:linear-gradient(180deg,${hex2rgba(tc,.24)},${hex2rgba(tc,.14)});color:${tc}">${progressHTML(it,w)}<span class="cap l"></span><span class="grip l"></span>${asg}<span class="grip r"></span><span class="cap r"></span></div>`;
   }
   const c=x+DAYW/2;
+  const mlabel=DAYW>=28?`<span class="mlabel">${(it.label||'').slice(0,26)}</span>`:'';
   if(it.type==='meeting'){
     const cc=(clash[it.date+'|'+it.time]&&clash[it.date+'|'+it.time].length>1)?' collide':'';
-    return `<div class="pin${cc}${nf}" data-pid="${p.id}" data-type="meeting" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${c}px;top:${(H-16)/2}px;color:${p.color}"><div class="dot" style="background:${p.color}"></div></div>`;
+    return `<div class="pin${cc}${nf}${rsvpClass(it)}${gm}" data-pid="${p.id}" data-type="meeting" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${c}px;top:${(H-16)/2}px;color:${p.color}"><div class="dot" style="background:${p.color}"></div>${mlabel}</div>`;
   }
-  return `<div class="flag${nf}" data-pid="${p.id}" data-type="deadline" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${c}px;top:${(H-12)/2}px;color:${p.color}"><div class="tri" style="border-top:12px solid ${p.color}"></div></div>`;
+  return `<div class="flag${nf}${rsvpClass(it)}${gm}" data-pid="${p.id}" data-type="deadline" data-key="${it.key}" data-tip="${tipData(p,it)}" style="left:${c}px;top:${(H-12)/2}px;color:${p.color}"><div class="tri" style="border-top:12px solid ${p.color}"></div>${mlabel}</div>`;
 }
 
 function tipData(p,it){
@@ -788,7 +863,7 @@ function renderDetail(){
   const arr=t=>t==='meeting'?p.meetings:t==='deadline'?p.deadlines:p.tasks;
   sw.querySelectorAll('input,button[data-rm]').forEach(node=>{
     const t=node.dataset.t,k=node.dataset.k;
-    if(node.dataset.rm){node.onclick=()=>{const a=arr(t);const i=a.findIndex(x=>x.key===k);if(i>=0){recordDeletion(p,a[i],t);a.splice(i,1);}save();renderAll();};return;}
+    if(node.dataset.rm){node.onclick=()=>{const a=arr(t);const i=a.findIndex(x=>x.key===k);if(i>=0){const nm=t==='meeting'?'meetings':t==='deadline'?'deadlines':'tasks';UNDO={kind:'item',payload:{pid:p.id,arrName:nm,item:a[i]}};recordDeletion(p,a[i],t);a.splice(i,1);}save();renderAll();};return;}
     const item=arr(t)&&arr(t).find(x=>x.key===k); if(!item)return;
     node.onchange=()=>{
       if(node.type==='checkbox')item.include=node.checked;
@@ -829,10 +904,15 @@ function renderDetail(){
   });
 
   let rr='';
-  p.roster.forEach((m,i)=>{rr+=`<div class="roster-row">
-    <input type="text" placeholder="Name" value="${(m.n||'').replace(/"/g,'&quot;')}" data-i="${i}" data-f="n">
-    <input type="text" placeholder="email" value="${(m.e||'').replace(/"/g,'&quot;')}" data-i="${i}" data-f="e">
-    <button class="btn ghost sm" data-del="${i}">✕</button></div>`;});
+  p.roster.forEach((m,i)=>{rr+=`<span class="rchip" title="${(m.e||'')}">${(m.n||m.e||'?').replace(/</g,'&lt;')} <button data-del="${i}" title="Remove from this project">✕</button></span>`;});
+  const inRoster=new Set(p.roster.map(m=>m.e));
+  const dirOpts=PEOPLE.filter(x=>x.e&&!inRoster.has(x.e)).map((x,i)=>`<option value="${x.e}">${(x.n||x.e).replace(/</g,'&lt;')}</option>`).join('');
+  rr=`<div class="rchips">${rr||'<span style="font-size:11.5px;color:var(--muted)">No one yet.</span>'}</div>
+    <div class="gcalrow" style="margin-top:7px">
+      <select id="dirPick"><option value="">— add from People —</option>${dirOpts}</select>
+      <button class="btn sm" id="newPerson">＋ New person</button>
+      <button class="btn ghost sm" id="managePeople" title="Edit the shared People directory">👥 Manage</button>
+    </div>`;
   stw.innerHTML=`
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:24px;align-items:start">
    <div>
@@ -858,8 +938,7 @@ function renderDetail(){
         <input type="text" id="fOrg" placeholder="you@moh.gov.kw" value="${(ORG||'').replace(/"/g,'&quot;')}"></div>
     </div>
     <div style="font-size:11px;color:var(--muted);margin:-4px 0 12px">Shown as the organizer on invited meetings, deadlines &amp; assigned tasks; needed for attendees to import.</div>
-    <div class="field"><label>Project Group — invited to every meeting &amp; deadline (and pick from here to assign tasks)</label>${rr}
-      <button class="btn sm" id="addRoster">+ Add person</button></div>
+    <div class="field"><label>Project Group — invited to every meeting &amp; deadline (and pick from here to assign tasks). One profile per person across all projects.</label>${rr}</div>
    </div>
    <div>
     <div class="field"><label>Category to create in Outlook first</label>
@@ -897,9 +976,16 @@ function renderDetail(){
   bind('fName','name');bind('fTag','tag');bind('fColor','color');
   bind('fDow','meetDow',v=>+v);bind('fMtime','meetTime');bind('fDtime','ddlTime');bind('fDur','dur',v=>parseInt(v)||60);bind('fLoc','location');
   el('resnap').onclick=()=>{p.meetings.forEach(m=>{m.date=snapDow(m.date,p.meetDow);m.time=p.meetTime;});save();renderAll();toast('Meetings snapped to '+DOWN[p.meetDow]);};
-  stw.querySelectorAll('.roster-row input').forEach(inp=>inp.onchange=()=>{p.roster[+inp.dataset.i][inp.dataset.f]=inp.value;save();renderGantt();});
   stw.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{p.roster.splice(+b.dataset.del,1);save();renderDetail();});
-  el('addRoster').onclick=()=>{p.roster.push({n:'',e:''});renderDetail();};
+  const dp=el('dirPick'); if(dp) dp.onchange=e=>{ const per=PEOPLE.find(x=>x.e===e.target.value); if(per){ p.roster.push({n:per.n,e:per.e}); save(); renderDetail(); } };
+  const np=el('newPerson'); if(np) np.onclick=()=>{
+    const n=prompt('Name (e.g. Dr. Ahmed Ali):'); if(n===null)return;
+    const em=prompt('Email:'); if(!em||!/.+@.+\..+/.test(em.trim())){ if(em!==null) toast('Enter a valid email'); return; }
+    const person=addPerson(n.trim(),em.trim());
+    if(!p.roster.some(m=>m.e===person.e)) p.roster.push({n:person.n,e:person.e});
+    save(); renderDetail();
+  };
+  const mp=el('managePeople'); if(mp) mp.onclick=openPeople;
   el('fOrg').onchange=e=>{ORG=e.target.value.trim();save();};
   el('fOrgName').onchange=e=>{ORGNAME=e.target.value.trim();save();};
   el('copyTag').onclick=()=>{const t=p.tag;(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Category "'+t+'" copied')).catch(()=>toast('Category: '+t));};
@@ -921,14 +1007,20 @@ function renderDetail(){
   el('lockBtn').className='btn sm'+(locked?' primary':'');
   el('lockBadge').innerHTML=locked?'<span class="pill warn" style="padding:3px 10px">🔒 Locked</span>':'';
   [sw,stw,el('libraryWrap')].forEach(root=>root.querySelectorAll('input,select,textarea,button').forEach(n=>{
-    if(n.id==='zipOne'||n.id==='fGcal'||n.id==='newGcal'||n.id==='pushGcal'||n.id==='shareAdd'||n.id==='shareEmail'||n.id==='shareRole'||n.dataset.unshare)return;  // google + export controls manage their own state
+    if(n.id==='zipOne'||n.id==='fGcal'||n.id==='newGcal'||n.id==='pushGcal'||n.id==='fLive'||n.id==='shareAdd'||n.id==='shareEmail'||n.id==='shareRole'||n.dataset.unshare)return;  // google + export controls manage their own state
     n.disabled=locked;
   }));
   el('zipOne').disabled=!locked;
   if(dz) dz.classList.toggle('locked',locked);
   const eh=el('exportHint'); if(eh) eh.textContent=locked?'':'🔒 Lock the project to enable export (it collapses into the list; use ⤓ on its bar).';
-  el('lockBtn').onclick=()=>{p.locked=!p.locked;closePopover();save();renderAll();toast(p.locked?'Locked & collapsed — use ⤓ on its bar to export':'Unlocked');};
-  el('delProj').onclick=()=>{if(!confirm('Delete this project?'))return;PROJECTS=PROJECTS.filter(x=>x.id!==p.id);selId=(PROJECTS.find(x=>!x.locked)||PROJECTS[0]||{}).id||null;save();renderAll();};
+  el('lockBtn').onclick=()=>{p.locked=!p.locked;closePopover();save();renderAll();toast(p.locked?'Locked & collapsed — no changes until unlocked':'Unlocked');};
+  const lb=el('liveBtn');
+  if(lb){ lb.textContent=p.live?'⚡ Live: ON':'⚡ Live: off'; lb.className='btn sm'+(p.live?' primary':'');
+    lb.onclick=()=>{ if(!p.live&&(!gToken||!p.gcalId)){ toast(!gToken?'Sign in with Google first':'Choose a calendar below first'); return; }
+      p.live=!p.live; save(); renderDetail(); toast(p.live?'⚡ Live sync ON — edits push automatically':'Live sync OFF — use ☁ Push'); if(p.live) scheduleLiveSync(); };
+  }
+  const tb=el('tmplBtn'); if(tb) tb.onclick=()=>duplicateAsTemplate(p);
+  el('delProj').onclick=()=>removeProject(p);
 }
 
 function renderUpcoming(){
@@ -936,9 +1028,9 @@ function renderUpcoming(){
   const from=todayIso(), to=addDays(from,56);   // 8 weeks
   const rows=[];
   PROJECTS.forEach(p=>{
-    (p.meetings||[]).filter(m=>m.include).forEach(m=>rows.push({p,type:'meeting',date:m.date,time:m.time,label:m.label,who:(m.asgNote||[]).map(a=>a.n||a.e).filter(Boolean)}));
-    (p.deadlines||[]).filter(m=>m.include).forEach(m=>rows.push({p,type:'deadline',date:m.date,time:m.time,label:m.label,who:(m.asgNote||[]).map(a=>a.n||a.e).filter(Boolean)}));
-    (p.tasks||[]).filter(t=>t.include).forEach(t=>rows.push({p,type:'task',date:t.end,time:'',label:t.label,due:true,who:(t.att||[]).map(a=>a.n||a.e).filter(Boolean)}));
+    (p.meetings||[]).filter(m=>m.include).forEach(m=>rows.push({p,it:m,type:'meeting',date:m.date,time:m.time,label:m.label,who:(m.asgNote||[]).map(a=>a.n||a.e).filter(Boolean)}));
+    (p.deadlines||[]).filter(m=>m.include).forEach(m=>rows.push({p,it:m,type:'deadline',date:m.date,time:m.time,label:m.label,who:(m.asgNote||[]).map(a=>a.n||a.e).filter(Boolean)}));
+    (p.tasks||[]).filter(t=>t.include).forEach(t=>rows.push({p,it:t,type:'task',date:t.end,time:'',label:t.label,due:true,who:(t.att||[]).map(a=>a.n||a.e).filter(Boolean)}));
   });
   // filter option pools (from everything in window, before applying filters)
   const inWin=rows.filter(r=>parse(r.date)>=parse(from)&&parse(r.date)<=parse(to));
@@ -966,13 +1058,16 @@ function renderUpcoming(){
         const soon=days<=3?' up-soon':'';
         const ty=r.type==='meeting'?'tt-meeting':r.type==='deadline'?'tt-deadline':'tt-task';
         const who=r.who&&r.who.length?`<span class="up-who">👤 ${r.who.join(', ')}</span>`:'';
+        const rc=r.it?rsvpClass(r.it).trim():'';
+        const rs=r.it&&rsvpSummary(r.it)?`<span class="up-rsvp ${rc}">${rsvpSummary(r.it)}</span>`:'';
+        const gm=r.it&&r.it.gmissing?'<span class="up-rsvp rsvp-bad">removed in Google</span>':'';
         const when=r.due?`<b>${fmt(r.date)}</b> due`:`<b>${fmt(r.date)}</b> ${r.time}`;
         const tylbl=r.type==='task'?'task':r.type;
         return `<div class="up-row" data-id="${r.p.id}">
           <span class="up-when">${when}<br><span class="${soon}">${rel}</span></span>
           <span class="up-dot" style="background:${r.p.color}"></span>
           <span class="up-type ${ty}">${tylbl}</span>
-          <span class="up-lbl">${r.label}${who}</span>
+          <span class="up-lbl">${r.label}${who}${rs}${gm}</span>
           <span class="up-tag">[${r.p.tag}]</span>
         </div>`;
       }).join('')
@@ -1001,8 +1096,10 @@ const DETAIL_MARKUP=`
         <h2 id="dName">—</h2><span class="sub" id="dTag"></span>
         <span id="lockBadge"></span>
         <div class="spacer"></div>
+        <button class="btn sm" id="liveBtn">⚡ Live: off</button>
         <button class="btn sm" id="lockBtn">🔒 Lock to export</button>
-        <button class="btn ghost sm" id="delProj">Delete</button>
+        <button class="btn ghost sm" id="tmplBtn" title="New project from this one's structure, dates shifted to today">⧉ Template</button>
+        <button class="btn ghost sm" id="delProj" title="Remove project — deletes its calendar events (no emails) and moves it to Old / Completed">🗑 Remove</button>
       </div>
       <div id="scheduleWrap"></div>
     </section>
@@ -1024,8 +1121,10 @@ function renderProjects(){
       html+=`<section class="panel projbar${p.locked?' locked':''}${p.id===selId?' sel':''}" data-openproj="${p.id}">
         <span class="swatch" style="background:${p.color}"></span>
         <div class="pbmeta"><span class="pbname">${p.name}</span><span class="pbsub">[${p.tag}] · ${nm} mtg · ${nd} ddl · ${nt} task</span></div>
+        ${p.live?'<span class="pill" style="padding:3px 10px;background:#FFF3D6;color:#8A6100">⚡ Live</span>':''}
         ${p.locked?'<span class="pill warn" style="padding:3px 10px">🔒 Locked</span>':'<span class="pill" style="background:var(--line2);color:var(--muted);padding:3px 10px">Unlocked</span>'}
         <div class="spacer"></div>
+        <button class="btn ghost sm" data-livetog="${p.id}" title="Toggle live sync">${p.live?'⚡ On':'⚡ Off'}</button>
         ${p.locked
           ? `<button class="btn primary sm" data-gpush="${p.id}" title="Sync this project to Google Calendar — invites & updates send automatically">☁ Push</button><button class="btn ghost sm" data-dlproj="${p.id}" title="Download .ics backup (.zip)">⤓ Files</button><button class="btn sm" data-unlock="${p.id}">🔓 Unlock</button>`
           : `<button class="btn sm" data-openproj2="${p.id}">Open ▸</button>`}
@@ -1034,11 +1133,32 @@ function renderProjects(){
   });
   host.innerHTML=html;
   host.querySelectorAll('[data-unlock]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.unlock);if(pr){pr.locked=false;selId=pr.id;closePopover();save();renderAll();}});
+  host.querySelectorAll('[data-livetog]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.livetog);if(!pr)return;
+    if(!pr.live&&(!gToken||!pr.gcalId)){ toast(!gToken?'Sign in with Google first':'Open the project and choose a calendar first'); return; }
+    pr.live=!pr.live; save(); renderProjects(); toast(pr.live?`⚡ ${pr.tag}: live sync ON`:`${pr.tag}: live sync off`); if(pr.live) scheduleLiveSync();});
   host.querySelectorAll('[data-gpush]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.gpush);if(pr)gPush(pr);});
   host.querySelectorAll('[data-dlproj]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.dlproj);if(pr)exportProjectZip(pr);});
   host.querySelectorAll('[data-openproj2]').forEach(b=>b.onclick=e=>{e.stopPropagation();selId=b.dataset.openproj2;save();renderAll();});
   host.querySelectorAll('[data-openproj]').forEach(sec=>sec.onclick=()=>{selId=sec.dataset.openproj;save();renderAll();});
   if(el('scheduleWrap')) renderDetail();
+  renderArchive();
+}
+function renderArchive(){
+  const panel=el('archivePanel'), wrap=el('archiveWrap'); if(!panel||!wrap) return;
+  if(!ARCHIVE.length){ panel.style.display='none'; wrap.innerHTML=''; return; }
+  panel.style.display='';
+  wrap.innerHTML=ARCHIVE.map(p=>{
+    const nm=(p.meetings||[]).length, nd=(p.deadlines||[]).length, nt=(p.tasks||[]).length;
+    return `<div class="projbar" style="margin:10px 14px;opacity:.85">
+      <span class="swatch" style="background:${p.color}"></span>
+      <div class="pbmeta"><span class="pbname">${p.name}</span><span class="pbsub">[${p.tag}] · ${nm} mtg · ${nd} ddl · ${nt} task</span></div>
+      <div class="spacer"></div>
+      <button class="btn sm" data-restore="${p.id}">↩ Restore</button>
+      <button class="btn ghost sm" data-purge="${p.id}" title="Delete forever">✕</button>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>restoreProject(b.dataset.restore));
+  wrap.querySelectorAll('[data-purge]').forEach(b=>b.onclick=()=>{ if(!confirm('Delete this project forever? This cannot be undone.'))return; ARCHIVE=ARCHIVE.filter(x=>x.id!==b.dataset.purge); save(); renderArchive(); });
 }
 function renderAll(){renderView();renderGantt();renderUpcoming();renderProjects();}
 
@@ -1318,6 +1438,16 @@ el('fileIn').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new Fil
 el('viewSel').onchange=e=>{viewFilter=e.target.value;if(viewFilter!=='all')selId=viewFilter;renderAll();};
 el('zoomIn').onclick=()=>{DAYW=Math.min(DAYW+3,40);renderGantt();};
 el('zoomOut').onclick=()=>{DAYW=Math.max(DAYW-3,6);renderGantt();};
+el('presetW').onclick=()=>{DAYW=40;renderGantt();scrollToToday();};
+el('presetM').onclick=()=>{DAYW=18;renderGantt();scrollToToday();};
+el('presetQ').onclick=()=>{DAYW=8;renderGantt();};
+el('todayBtn').onclick=()=>scrollToToday();
+function scrollToToday(){
+  const w=el('ganttWrap'); if(!w) return;
+  const {min}=bounds(); const x=laneLabelW()+daysBetween(min,todayIso())*DAYW;
+  if(typeof w.scrollTo==='function') w.scrollTo({left:Math.max(0,x-(w.clientWidth||800)/2),behavior:'smooth'});
+  else w.scrollLeft=Math.max(0,x-400);
+}
 
 let tT;function toast(m){const t=el('toast');t.textContent=m;t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2600);}
 window.addEventListener('resize',()=>renderGantt());
@@ -1608,7 +1738,8 @@ function openEventPopover(p,type,key,cx,cy){
       let html='';
       if(group.length){
         html+=`<div style="font-size:10.5px;color:var(--muted);margin:2px 0 5px">Tick who owns this task (you can pick yourself):</div>`;
-        html+=group.map(m=>`<label class="chkrow"><input type="checkbox" data-ge="${m.e}" ${inAtt(m.e)?'checked':''}><span>${(m.n||m.e)}${m.org?' — you':''}</span></label>`).join('');
+        const st=e=>{const r=(item.rsvp||{})[e];return r==='accepted'?' <span style="color:#2EA356">✓</span>':r==='declined'?' <span style="color:#D64540">✗</span>':r==='tentative'?' <span style="color:#8A6100">?</span>':(r?' <span style="color:#8A6100">·</span>':'');};
+        html+=group.map(m=>`<label class="chkrow"><input type="checkbox" data-ge="${m.e}" ${inAtt(m.e)?'checked':''}><span>${(m.n||m.e)}${m.org?' — you':''}${st(m.e)}</span></label>`).join('');
       }else{
         html+=`<div style="font-size:11px;color:var(--muted)">No one in the Project Group yet — add people in the project settings, or add someone below.</div>`;
       }
@@ -1656,6 +1787,9 @@ function openEventPopover(p,type,key,cx,cy){
   el('epClose').onclick=closePopover;
 }
 el('gantt').addEventListener('pointerdown',ganttPointerDown);
+el('undoBtn').onclick=()=>undoLast();
+el('peopleBtn').onclick=()=>openPeople();
+(function(){const pc=el('peopleClose');if(pc)pc.onclick=()=>el('peopleOv').classList.remove('show');})();
 
 /* =================== GOOGLE CALENDAR LAYER =================== */
 let gReady=false, gToken=null, gEmail='', gCals=[], tokenClient=null;
@@ -1701,7 +1835,8 @@ function renderAuth(){
     };
     return;
   }
-  a.innerHTML=`<span class="pill ok" style="gap:6px">☁ ${gEmail||'connected'}</span>`;
+  a.innerHTML=`<span class="pill ok" style="gap:6px">☁ ${gEmail||'connected'}</span> <button class="btn ghost sm" id="gRefresh" title="Pull RSVP + calendar changes now">↻</button>`;
+  const gr=el('gRefresh'); if(gr) gr.onclick=()=>{ toast('Refreshing from Google…'); gPoll().then(()=>toast('Up to date')).catch(()=>toast('Refresh failed — try signing in again')); };
 }
 async function afterSignIn(){
   try{
@@ -1710,6 +1845,7 @@ async function afterSignIn(){
     const prim=gCals.find(c=>c.primary); gEmail=prim?prim.id:'';
   }catch(e){ toast('Could not load calendars: '+gErr(e)); }
   renderAuth(); renderProjects();
+  startPolling();
 }
 const gErr=e=>(e&&e.result&&e.result.error&&e.result.error.message)||(e&&e.message)||'unknown error';
 
@@ -1724,6 +1860,13 @@ async function gNewCalendar(p){
   }catch(e){ toast('Create failed: '+gErr(e)); return null; }
 }
 
+const GCOLORS={1:'#7986cb',2:'#33b679',3:'#8e24aa',4:'#e67c73',5:'#f6bf26',6:'#f4511e',7:'#039be5',8:'#616161',9:'#3f51b5',10:'#0b8043',11:'#d50000'};
+function gColorId(hex){
+  const h=x=>[parseInt(x.slice(1,3),16),parseInt(x.slice(3,5),16),parseInt(x.slice(5,7),16)];
+  let best=null,bd=1e9; const c=h(hex||'#127884');
+  Object.entries(GCOLORS).forEach(([id,g])=>{const gg=h(g);const d=(c[0]-gg[0])**2+(c[1]-gg[1])**2+(c[2]-gg[2])**2;if(d<bd){bd=d;best=id;}});
+  return best;
+}
 /* Build a Google event resource from a console item — mirrors buildEvents rules */
 function buildGEvent(p,it,type){
   const invited = type!=='task' || taskInvited(it);
@@ -1735,6 +1878,7 @@ function buildGEvent(p,it,type){
   const ev={
     summary:`[${p.tag}] ${type==='deadline'?'DEADLINE — ':''}${it.label}`,
     description,
+    colorId:gColorId(p.color),
     transparency:type==='meeting'?'opaque':'transparent',
     reminders: invited ? {useDefault:false,overrides:[{method:'popup',minutes:10080},{method:'popup',minutes:1440}]} : {useDefault:true}
   };
@@ -1757,47 +1901,94 @@ function buildGEvent(p,it,type){
   }
   return ev;
 }
-function gPlan(p){   // list of operations to sync this project
+function gPlan(p){   // full sync: every included item
   const ops=[];
-  const push=(it,type)=>{ if(!it.include)return; ops.push({kind:(p.gmap||{})[it.key]?'update':'insert', key:it.key, type, ev:buildGEvent(p,it,type)}); };
+  const push=(it,type)=>{
+    if(!it.include){ const gid=(p.gmap||{})[it.key]; if(gid) ops.push({kind:'delete',gid,key:it.key,unmap:true}); return; }
+    ops.push({kind:(p.gmap||{})[it.key]?'update':'insert', key:it.key, type, rev:it.rev||0, ev:buildGEvent(p,it,type)});
+  };
   (p.meetings||[]).forEach(m=>push(m,'meeting'));
   (p.deadlines||[]).forEach(d=>push(d,'deadline'));
   (p.tasks||[]).forEach(t=>push(t,'task'));
   (p.deleted||[]).filter(d=>d.gid).forEach(d=>ops.push({kind:'delete',gid:d.gid,key:d.key}));
   return ops;
 }
-async function gPush(p){
-  if(!gToken){ toast('Sign in with Google first'); return; }
-  if(!p.gcalId){ toast('Choose a calendar for this project first'); return; }
-  if(!p.locked){ toast('🔒 Lock the project, then push'); return; }
-  p.gmap=p.gmap||{};
-  const ops=gPlan(p);
-  if(!ops.length){ toast('Nothing to push'); return; }
-  const hint=el('pushHint'); let done=0,fail=0;
+function gChangedOps(p){   // live sync: only what changed since last push
+  p.gpushed=p.gpushed||{};
+  return gPlan(p).filter(op=>{
+    if(op.kind==='delete') return true;
+    if(op.kind==='insert') return true;
+    return (op.rev||0)>(p.gpushed[op.key]??-1);
+  });
+}
+async function gExec(p,ops,hint){
+  let done=0,fail=0,i=0;
+  p.gmap=p.gmap||{}; p.gpushed=p.gpushed||{};
   for(const op of ops){
-    if(hint) hint.textContent=`Syncing ${++done + fail}/${ops.length}…`;
+    if(hint) hint.textContent=`Syncing ${++i}/${ops.length}…`;
     try{
       if(op.kind==='insert'){
         const r=await gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev});
-        p.gmap[op.key]=r.result.id;
+        p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++;
       }else if(op.kind==='update'){
         await gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev});
+        p.gpushed[op.key]=op.rev||0; done++;
       }else{
         try{ await gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'}); }
-        catch(e){ const c=e&&e.status; if(c!==404&&c!==410) throw e; }   // already gone = fine
+        catch(e){ const c=e&&e.status; if(c!==404&&c!==410) throw e; }
+        if(op.unmap){ delete p.gmap[op.key]; delete p.gpushed[op.key]; }
+        done++;
       }
     }catch(e){
-      if(op.kind==='update' && (e.status===404||e.status===410)){   // mapping stale -> recreate
-        try{ const r=await gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}); p.gmap[op.key]=r.result.id; }
-        catch(e2){ fail++; done--; }
-      } else { fail++; done--; }
+      if(op.kind==='update' && (e.status===404||e.status===410)){
+        try{ const r=await gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}); p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++; }
+        catch(e2){ fail++; }
+      } else fail++;
     }
   }
-  p.deleted=(p.deleted||[]).filter(d=>!d.gid);   // pushed deletions are done
-  save();
+  p.deleted=(p.deleted||[]).filter(d=>!d.gid);
   if(hint) hint.textContent='';
+  return {done,fail};
+}
+async function gPush(p){
+  if(!gToken){ toast('Sign in with Google first'); return; }
+  if(!p.gcalId){ toast('Choose a calendar for this project first'); return; }
+  if(!p.locked && !p.live){ toast('🔒 Lock the project (or turn on ⚡ Live sync), then push'); return; }
+  // cross-project clash check
+  const mine=(p.meetings||[]).filter(m=>m.include).map(m=>m.date+'|'+m.time);
+  const clashes=[];
+  PROJECTS.filter(x=>x.id!==p.id).forEach(x=>(x.meetings||[]).filter(m=>m.include).forEach(m=>{ if(mine.includes(m.date+'|'+m.time)) clashes.push(`${fmt(m.date)} ${m.time} vs [${x.tag}]`); }));
+  if(clashes.length && !confirm(`⚠ Meeting time clash with other projects:\n${[...new Set(clashes)].join('\n')}\n\nPush anyway?`)) return;
+  const ops=gPlan(p);
+  if(!ops.length){ toast('Nothing to push'); return; }
+  const {done,fail}=await gExec(p,ops,el('pushHint'));
+  save();
   toast(fail?`Synced with ${fail} error(s) — try again or check sign-in`:`☁ ${p.tag}: ${done} events synced — invites & updates sent automatically`);
   renderProjects();
+}
+
+/* ---- live sync: auto-push changed items ~4s after the last edit ---- */
+let liveTimer=null, liveBusy=false;
+function scheduleLiveSync(){
+  if(!gToken) return;
+  if(!PROJECTS.some(p=>p.live&&p.gcalId)) return;
+  clearTimeout(liveTimer);
+  liveTimer=setTimeout(runLiveSync,4000);
+}
+async function runLiveSync(){
+  if(liveBusy){ scheduleLiveSync(); return; }
+  if(!gToken) return;
+  liveBusy=true;
+  try{
+    for(const p of PROJECTS.filter(x=>x.live&&x.gcalId)){
+      const ops=gChangedOps(p);
+      if(!ops.length) continue;
+      const {done,fail}=await gExec(p,ops,null);
+      if(done) toast(`⚡ ${p.tag}: ${done} change${done>1?'s':''} synced${fail?` (${fail} failed)`:''}`);
+      else if(fail) toast(`⚡ ${p.tag}: sync failed — check sign-in`);
+    }
+    await save0();
+  } finally { liveBusy=false; }
 }
 
 /* ---- per-calendar sharing (ACL) ---- */
@@ -1832,18 +2023,177 @@ function wireGcalControls(p){
   const sel=el('fGcal'); if(!sel) return;
   sel.innerHTML='<option value="">— choose a calendar —</option>'+gCals.map(c=>`<option value="${c.id}" ${p.gcalId===c.id?'selected':''}>${c.name}${c.primary?' (main)':''}</option>`).join('');
   sel.disabled=!gToken;
-  sel.onchange=e=>{ p.gcalId=e.target.value; save(); renderShare(p); };
+  sel.onchange=e=>{ p.gcalId=e.target.value; save(); renderShare(p); wireGcalControls(p); };
   el('newGcal').disabled=!gToken;
   el('newGcal').onclick=async()=>{ const id=await gNewCalendar(p); if(id){ p.gcalId=id; save(); wireGcalControls(p); renderShare(p); } };
   const pb=el('pushGcal');
-  pb.disabled=!(gToken&&p.gcalId&&p.locked);
+  pb.disabled=!(gToken&&p.gcalId&&(p.locked||p.live));
   pb.onclick=()=>gPush(p);
   const ph=el('pushHint');
-  if(ph&&!ph.textContent) ph.textContent = !gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar above.':!p.locked?'🔒 Lock the project, then push. Invites, updates & deletions all send automatically.':'Ready — pushes creates/updates/deletions; attendees are notified automatically.';
+  if(ph&&!ph.textContent) ph.textContent = !gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar above.':p.live?'⚡ Live: edits sync automatically; the button force-pushes everything.':!p.locked?'🔒 Lock the project then push — or turn on ⚡ Live sync above.':'Ready — pushes creates/updates/deletions; attendees are notified automatically.';
   renderShare(p);
 }
 gInitWhenLoaded();
 /* =================== END GOOGLE LAYER =================== */
+
+/* =================== PEOPLE DIRECTORY =================== */
+function addPerson(n,e){
+  let per=PEOPLE.find(x=>x.e===e);
+  if(per){ if(n&&!per.n) per.n=n; return per; }
+  per={n:n||'',e}; PEOPLE.push(per); return per;
+}
+function propagatePerson(oldE,per){   // apply a directory edit everywhere
+  const fix=a=>{ (a||[]).forEach(x=>{ if(x.e===oldE){ x.e=per.e; x.n=per.n; } }); };
+  [...PROJECTS,...ARCHIVE].forEach(p=>{
+    fix(p.roster);
+    (p.tasks||[]).forEach(t=>fix(t.att));
+    [...(p.meetings||[]),...(p.deadlines||[])].forEach(it=>fix(it.asgNote));
+  });
+}
+function openPeople(){
+  const ov=el('peopleOv'); if(!ov) return;
+  const rows=PEOPLE.map((x,i)=>`<div class="roster-row">
+    <input type="text" value="${(x.n||'').replace(/"/g,'&quot;')}" data-pi="${i}" data-f="n" placeholder="Name">
+    <input type="text" value="${(x.e||'').replace(/"/g,'&quot;')}" data-pi="${i}" data-f="e" placeholder="email">
+    <button class="btn ghost sm" data-pdel="${i}" title="Remove from directory (does not touch projects)">✕</button></div>`).join('');
+  el('peopleBody').innerHTML=(rows||'<div class="empty">No people yet — add via a project group.</div>')+
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px">Editing a person here updates them in every project, task and note.</div>';
+  el('peopleBody').querySelectorAll('input').forEach(inp=>inp.onchange=()=>{
+    const per=PEOPLE[+inp.dataset.pi]; const oldE=per.e;
+    per[inp.dataset.f]=inp.value.trim();
+    propagatePerson(oldE,per); save(); renderAll();
+  });
+  el('peopleBody').querySelectorAll('[data-pdel]').forEach(b=>b.onclick=()=>{ PEOPLE.splice(+b.dataset.pdel,1); save(); openPeople(); });
+  ov.classList.add('show');
+}
+
+/* =================== ARCHIVE / REMOVE PROJECT =================== */
+async function removeProject(p){
+  const mapped=Object.values(p.gmap||{});
+  const msg=mapped.length&&gToken
+    ? `Remove “${p.name}”?\n\n• ${mapped.length} events will be DELETED from Google Calendar (silently — no emails sent)\n• The project moves to Old / Completed (restorable)`
+    : `Remove “${p.name}”?\n\nIt moves to Old / Completed (restorable).${mapped.length?'\n(Not signed in — its Google events will NOT be removed.)':''}`;
+  if(!confirm(msg)) return;
+  if(mapped.length&&gToken&&p.gcalId){
+    let fails=0;
+    for(const gid of mapped){
+      try{ await gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:gid,sendUpdates:'none'}); }
+      catch(e){ const c=e&&e.status; if(c!==404&&c!==410) fails++; }
+    }
+    if(fails) toast(`${fails} event(s) could not be removed — check the calendar`);
+  }
+  p.gmap={}; p.gpushed={}; p.deleted=[]; p.live=false;
+  PROJECTS=PROJECTS.filter(x=>x.id!==p.id);
+  ARCHIVE.unshift(p);
+  UNDO={kind:'project',payload:p};
+  selId=(PROJECTS[0]&&PROJECTS[0].id)||null;
+  await save(); renderAll();
+  toast(`“${p.name}” moved to Old / Completed`);
+}
+function restoreProject(id){
+  const i=ARCHIVE.findIndex(x=>x.id===id); if(i<0)return;
+  const p=ARCHIVE.splice(i,1)[0];
+  p.locked=false; PROJECTS.push(p); selId=p.id;
+  save(); renderAll();
+  toast(`“${p.name}” restored — press ☁ Push to put its events back on the calendar`);
+}
+function undoLast(){
+  if(!UNDO){ toast('Nothing to undo'); return; }
+  if(UNDO.kind==='project'){
+    const p=UNDO.payload; ARCHIVE=ARCHIVE.filter(x=>x.id!==p.id);
+    if(!PROJECTS.some(x=>x.id===p.id)) PROJECTS.push(p); selId=p.id;
+    toast(`“${p.name}” brought back (push to restore calendar events)`);
+  }else if(UNDO.kind==='item'){
+    const {pid,arrName,item}=UNDO.payload; const p=PROJECTS.find(x=>x.id===pid);
+    if(p){ p[arrName].push(item); p.deleted=(p.deleted||[]).filter(d=>d.key!==item.key); toast(`“${item.label}” restored`); }
+  }
+  UNDO=null; save(); renderAll();
+}
+
+/* =================== PROJECT TEMPLATE =================== */
+function duplicateAsTemplate(src){
+  const name=prompt('New project name:',src.name+' (new)'); if(!name)return;
+  const tag=prompt('New tag / category (short, unique):',(src.tag+'2').slice(0,12)); if(!tag)return;
+  const earliest=[...(src.tasks||[]).map(t=>t.start),...(src.meetings||[]).map(m=>m.date),...(src.deadlines||[]).map(d=>d.date)].sort()[0]||todayIso();
+  const shift=daysBetween(earliest,todayIso());
+  const mv=d=>addDays(d,shift);
+  const np={ id:'p'+Math.random().toString(36).slice(2,8), tag:tag.trim(), name:name.trim(), color:src.color,
+    anchor:mv(src.anchor||earliest), meetDow:src.meetDow, meetTime:src.meetTime, ddlTime:src.ddlTime, dur:src.dur, location:src.location,
+    roster:(src.roster||[]).map(m=>({...m})),
+    meetings:(src.meetings||[]).map(m=>({key:newKey('m'),label:m.label,date:mv(m.date),time:m.time,include:m.include,desc:m.desc||'',asgNote:(m.asgNote||[]).map(a=>({...a}))})),
+    deadlines:(src.deadlines||[]).map(d=>({key:newKey('d'),label:d.label,date:mv(d.date),time:d.time,include:d.include,desc:d.desc||'',asgNote:(d.asgNote||[]).map(a=>({...a}))})),
+    tasks:(src.tasks||[]).map(t=>({key:newKey('t'),label:t.label,start:mv(t.start),end:mv(t.end),include:t.include,desc:t.desc||'',ttype:t.ttype||'concept',att:(t.att||[]).map(a=>({...a}))})),
+    locked:false, deleted:[] };
+  PROJECTS.push(np); selId=np.id; save(); renderAll();
+  toast(`“${np.name}” created from template — dates shifted to start today`);
+}
+
+/* =================== POLL: RSVP + CALENDAR→APP =================== */
+let pollTimer=null;
+function startPolling(){ stopPolling(); pollTimer=setInterval(()=>{ gPoll().catch(()=>{}); },60000); gPoll().catch(()=>{}); }
+function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+function findByKey(p,key){
+  for(const [arr,type] of [[p.meetings,'meeting'],[p.deadlines,'deadline'],[p.tasks,'task']]){
+    const it=(arr||[]).find(x=>x.key===key); if(it) return {it,type};
+  }
+  return null;
+}
+function applyPulled(p,key,gev){   // calendar wins for date/time/title
+  const f=findByKey(p,key); if(!f) return false;
+  const {it,type}=f; let changed=false;
+  // RSVP
+  const rs={}; (gev.attendees||[]).forEach(a=>{ if(a.email&&!a.self&&!a.organizer) rs[a.email]=a.responseStatus||'needsAction'; });
+  if(JSON.stringify(rs)!==JSON.stringify(it.rsvp||{})){ it.rsvp=rs; changed=true; }
+  if(gev.status==='cancelled'){ if(!it.gmissing){ it.gmissing=true; changed=true; } return changed; }
+  if(it.gmissing){ it.gmissing=false; changed=true; }
+  // title (strip our prefixes)
+  let lbl=(gev.summary||'').replace(/^\[[^\]]*\]\s*/,'').replace(/^DEADLINE — /,'');
+  if(lbl && lbl!==it.label){ it.label=lbl; changed=true; }
+  // dates/times
+  if(type==='task'){
+    if(gev.start&&gev.start.date&&gev.end&&gev.end.date){
+      const s=gev.start.date, e=addDays(gev.end.date,-1);
+      if(s!==it.start){ it.start=s; changed=true; }
+      if(e!==it.end){ it.end=e; changed=true; }
+    }
+  }else if(gev.start&&gev.start.dateTime){
+    const s=gev.start.dateTime, d=s.slice(0,10), t=s.slice(11,16);
+    if(d!==it.date){ it.date=d; changed=true; }
+    if(t!==it.time){ it.time=t; changed=true; }
+  }
+  return changed;
+}
+async function gPoll(){
+  if(!gToken) return;
+  let any=false;
+  for(const p of PROJECTS){
+    if(!p.gcalId||!p.gmap||!Object.keys(p.gmap).length) continue;
+    let r;
+    try{ r=await gapi.client.calendar.events.list({calendarId:p.gcalId,maxResults:2500,showDeleted:true}); }
+    catch(e){ if(e&&e.status===401){ gToken=null; stopPolling(); renderAuth(); } continue; }
+    const byId={}; (r.result.items||[]).forEach(ev=>byId[ev.id]=ev);
+    // sync-state per pushed event
+    Object.entries(p.gmap).forEach(([key,gid])=>{
+      const gev=byId[gid];
+      if(!gev){ const f=findByKey(p,key); if(f&&!f.it.gmissing){ f.it.gmissing=true; any=true; } return; }
+      if(applyPulled(p,key,gev)) any=true;
+    });
+  }
+  if(any){ await save0(); renderAll(); }
+}
+function rsvpClass(it){
+  const rs=it.rsvp; if(!rs) return '';
+  const v=Object.values(rs); if(!v.length) return '';
+  if(v.some(x=>x==='declined')) return ' rsvp-bad';
+  if(v.every(x=>x==='accepted')) return ' rsvp-ok';
+  return ' rsvp-wait';
+}
+const rsvpSummary=it=>{
+  const rs=it.rsvp; if(!rs) return '';
+  const v=Object.values(rs); if(!v.length) return '';
+  return `${v.filter(x=>x==='accepted').length}/${v.length} ✓`;
+};
+
 
 
 (async()=>{await load();renderAll();})();
