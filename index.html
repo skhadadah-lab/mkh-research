@@ -1981,33 +1981,54 @@ function gChangedOps(p){   // live sync: only what changed since last push
     return (op.rev||0)>(p.gpushed[op.key]??-1);
   });
 }
+/* Google rejects rapid bursts (403/429 rate limits). Pace calls and retry with backoff. */
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function gRateErr(e){
+  const reason=(e&&e.result&&e.result.error&&e.result.error.errors&&e.result.error.errors[0]&&e.result.error.errors[0].reason)||'';
+  const msg=(e&&e.result&&e.result.error&&e.result.error.message)||'';
+  return e&&(e.status===403||e.status===429)&&(/rate|quota|usage|limit/i.test(reason+msg)||reason===''); // unspecified 403 during bursts = treat as rate limit
+}
+async function gCall(fn){
+  let wait=1200;
+  for(let i=0;i<6;i++){
+    try{ return await fn(); }
+    catch(e){
+      if(e&&(e.status===404||e.status===410)) throw e;              // real not-found: let caller handle
+      if(gRateErr(e)&&i<5){ await sleep(wait); wait=Math.min(wait*2,20000); continue; }
+      throw e;
+    }
+  }
+}
 async function gExec(p,ops,hint){
-  let done=0,fail=0,i=0;
+  let done=0,fail=0,i=0,lastErr='';
   p.gmap=p.gmap||{}; p.gpushed=p.gpushed||{};
+  const pace=ops.length>2 ? 700 : 0;   // bulk syncs: ~1.4 calls/sec keeps Google happy
   for(const op of ops){
     if(hint) hint.textContent=`Syncing ${++i}/${ops.length}…`;
+    if(pace&&i>1) await sleep(pace);
     try{
       if(op.kind==='insert'){
-        const r=await gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev});
+        const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}));
         p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++;
       }else if(op.kind==='update'){
-        await gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev});
+        await gCall(()=>gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev}));
         p.gpushed[op.key]=op.rev||0; done++;
       }else{
-        try{ await gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'}); }
+        try{ await gCall(()=>gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'})); }
         catch(e){ const c=e&&e.status; if(c!==404&&c!==410) throw e; }
         if(op.unmap){ delete p.gmap[op.key]; delete p.gpushed[op.key]; }
         done++;
       }
     }catch(e){
       if(op.kind==='update' && (e.status===404||e.status===410)){
-        try{ const r=await gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}); p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++; }
-        catch(e2){ fail++; }
-      } else fail++;
+        try{ const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev})); p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++; }
+        catch(e2){ fail++; lastErr=gErr(e2); }
+      } else { fail++; lastErr=gErr(e); }
     }
   }
   p.deleted=(p.deleted||[]).filter(d=>!d.gid);
   if(hint) hint.textContent='';
+  if(fail&&lastErr) toast('Google said: '+lastErr.slice(0,120));
   return {done,fail};
 }
 async function gFullSync(p){   // full sync — runs when ⚡ Live is switched ON
