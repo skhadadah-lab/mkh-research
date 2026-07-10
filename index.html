@@ -175,6 +175,8 @@
   .rchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border:1px solid var(--line2);border-radius:999px;background:var(--panel)}
   .rchip button{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0}
   .rchip button:hover{color:var(--warn)}
+  tr.flash{animation:rowflash 2.6s ease-out}
+  @keyframes rowflash{0%{background:#CFE9EB}55%{background:#E4F1F2}100%{background:transparent}}
   .gcalrow{display:flex;gap:8px;align-items:center}
   .gcalrow select{flex:1;min-width:0}
   .share-row{display:flex;gap:10px;align-items:center;padding:5px 0;font-size:12.5px}
@@ -277,6 +279,7 @@
   <span id="gAuth"></span>
   <label class="pill" style="gap:8px">View <select id="viewSel" style="border:none;padding:2px 4px"></select></label>
   <button class="btn ghost sm" id="undoBtn" title="Undo the last remove/delete">↩ Undo</button>
+  <button class="btn sm" id="archiveBtn" title="Removed / completed projects — restore anytime">🗂 Old projects</button>
   <button class="btn sm" id="peopleBtn" title="One profile per person, shared across projects">👥 People</button>
   <button class="btn sm" id="saveJson">Save file</button>
   <button class="btn sm" id="loadJson">Load file</button>
@@ -330,12 +333,13 @@
   </section>
 
   <div id="projectsList" style="margin-top:22px"></div>
-
-  <section class="panel" id="archivePanel" style="margin-top:22px;display:none">
-    <div class="panel-h"><h2>Old / Completed projects</h2><span class="sub">removed from the calendar · restore anytime</span></div>
-    <div id="archiveWrap"></div>
-  </section>
 </main>
+
+<div class="overlay" id="archiveOv"><div class="modal" style="max-width:640px">
+  <div class="modal-h"><h2>🗂 Old / Completed projects</h2><span class="sub">removed from the calendar · restore anytime</span></div>
+  <div class="modal-b" id="archiveWrap"></div>
+  <div class="modal-f"><button class="btn primary sm" id="archiveClose">Done</button></div>
+</div></div>
 
 <div class="overlay" id="peopleOv"><div class="modal" style="max-width:560px">
   <div class="modal-h"><h2>👥 People directory</h2></div>
@@ -831,7 +835,7 @@ function renderDetail(){
     const typeCell=it.type==='task'
       ? `<span class="type-tag tt-${it.ttype||'task'}">${it.ttype?TASK_TYPES[it.ttype].short:'Task'}</span>`
       : `<span class="type-tag tt-${it.type}">${it.type}</span>`;
-    rows+=`<tr class="${off}${it.needs?' needsfill':''}">
+    rows+=`<tr data-rk="${it.type}:${it.key}" class="${off}${it.needs?' needsfill':''}">
       <td><input type="checkbox" class="chk" data-t="${it.type}" data-k="${it.key}" ${it.include?'checked':''}></td>
       <td>${typeCell}</td>
       <td><input type="text" data-t="${it.type}" data-k="${it.key}" data-f="label" value="${(it.label||'').replace(/"/g,'&quot;')}">${it.needs?'<span class="needbadge">fill in ✓</span>':''}</td>
@@ -953,7 +957,6 @@ function renderDetail(){
         <select id="fGcal"><option value="">— choose a calendar —</option></select>
         <button class="btn sm" id="newGcal">＋ New calendar</button>
       </div>
-      <div class="exp" style="margin-top:8px"><button class="btn primary sm" id="pushGcal">☁ Push to Google Calendar</button></div>
       <div id="pushHint" style="font-size:11.5px;color:var(--muted);margin-top:6px"></div>
     </div>
     <div class="field"><label>Share this calendar (per-calendar — only this one, not your others)</label>
@@ -1016,8 +1019,7 @@ function renderDetail(){
   el('lockBtn').onclick=()=>{p.locked=!p.locked;closePopover();save();renderAll();toast(p.locked?'Locked & collapsed — no changes until unlocked':'Unlocked');};
   const lb=el('liveBtn');
   if(lb){ lb.textContent=p.live?'⚡ Live: ON':'⚡ Live: off'; lb.className='btn sm'+(p.live?' primary':'');
-    lb.onclick=()=>{ if(!p.live&&(!gToken||!p.gcalId)){ toast(!gToken?'Sign in with Google first':'Choose a calendar below first'); return; }
-      p.live=!p.live; save(); renderDetail(); toast(p.live?'⚡ Live sync ON — edits push automatically':'Live sync OFF — use ☁ Push'); if(p.live) scheduleLiveSync(); };
+    lb.onclick=()=>toggleLive(p);
   }
   const tb=el('tmplBtn'); if(tb) tb.onclick=()=>duplicateAsTemplate(p);
   el('delProj').onclick=()=>removeProject(p);
@@ -1124,41 +1126,37 @@ function renderProjects(){
         ${p.live?'<span class="pill" style="padding:3px 10px;background:#FFF3D6;color:#8A6100">⚡ Live</span>':''}
         ${p.locked?'<span class="pill warn" style="padding:3px 10px">🔒 Locked</span>':'<span class="pill" style="background:var(--line2);color:var(--muted);padding:3px 10px">Unlocked</span>'}
         <div class="spacer"></div>
-        <button class="btn ghost sm" data-livetog="${p.id}" title="Toggle live sync">${p.live?'⚡ On':'⚡ Off'}</button>
+        <button class="btn ${p.live?'primary ':''}ghost sm" data-livetog="${p.id}" title="Toggle live sync">${p.live?'⚡ Live ON':'⚡ Live off'}</button>
         ${p.locked
-          ? `<button class="btn primary sm" data-gpush="${p.id}" title="Sync this project to Google Calendar — invites & updates send automatically">☁ Push</button><button class="btn ghost sm" data-dlproj="${p.id}" title="Download .ics backup (.zip)">⤓ Files</button><button class="btn sm" data-unlock="${p.id}">🔓 Unlock</button>`
+          ? `<button class="btn ghost sm" data-dlproj="${p.id}" title="Download .ics backup (.zip)">⤓ Files</button><button class="btn sm" data-unlock="${p.id}">🔓 Unlock</button>`
           : `<button class="btn sm" data-openproj2="${p.id}">Open ▸</button>`}
       </section>`;
     }
   });
   host.innerHTML=html;
   host.querySelectorAll('[data-unlock]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.unlock);if(pr){pr.locked=false;selId=pr.id;closePopover();save();renderAll();}});
-  host.querySelectorAll('[data-livetog]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.livetog);if(!pr)return;
-    if(!pr.live&&(!gToken||!pr.gcalId)){ toast(!gToken?'Sign in with Google first':'Open the project and choose a calendar first'); return; }
-    pr.live=!pr.live; save(); renderProjects(); toast(pr.live?`⚡ ${pr.tag}: live sync ON`:`${pr.tag}: live sync off`); if(pr.live) scheduleLiveSync();});
-  host.querySelectorAll('[data-gpush]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.gpush);if(pr)gPush(pr);});
+  host.querySelectorAll('[data-livetog]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.livetog);if(pr)toggleLive(pr);});
   host.querySelectorAll('[data-dlproj]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.dlproj);if(pr)exportProjectZip(pr);});
   host.querySelectorAll('[data-openproj2]').forEach(b=>b.onclick=e=>{e.stopPropagation();selId=b.dataset.openproj2;save();renderAll();});
   host.querySelectorAll('[data-openproj]').forEach(sec=>sec.onclick=()=>{selId=sec.dataset.openproj;save();renderAll();});
   if(el('scheduleWrap')) renderDetail();
-  renderArchive();
+  const ab=el('archiveBtn'); if(ab) ab.textContent=`🗂 Old projects${ARCHIVE.length?` (${ARCHIVE.length})`:''}`;
 }
 function renderArchive(){
-  const panel=el('archivePanel'), wrap=el('archiveWrap'); if(!panel||!wrap) return;
-  if(!ARCHIVE.length){ panel.style.display='none'; wrap.innerHTML=''; return; }
-  panel.style.display='';
-  wrap.innerHTML=ARCHIVE.map(p=>{
+  const wrap=el('archiveWrap'); if(!wrap) return;
+  wrap.innerHTML=ARCHIVE.length?ARCHIVE.map(p=>{
     const nm=(p.meetings||[]).length, nd=(p.deadlines||[]).length, nt=(p.tasks||[]).length;
-    return `<div class="projbar" style="margin:10px 14px;opacity:.85">
+    return `<div class="projbar" style="margin:0 0 10px;opacity:.9">
       <span class="swatch" style="background:${p.color}"></span>
       <div class="pbmeta"><span class="pbname">${p.name}</span><span class="pbsub">[${p.tag}] · ${nm} mtg · ${nd} ddl · ${nt} task</span></div>
       <div class="spacer"></div>
       <button class="btn sm" data-restore="${p.id}">↩ Restore</button>
       <button class="btn ghost sm" data-purge="${p.id}" title="Delete forever">✕</button>
     </div>`;
-  }).join('');
-  wrap.querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>restoreProject(b.dataset.restore));
-  wrap.querySelectorAll('[data-purge]').forEach(b=>b.onclick=()=>{ if(!confirm('Delete this project forever? This cannot be undone.'))return; ARCHIVE=ARCHIVE.filter(x=>x.id!==b.dataset.purge); save(); renderArchive(); });
+  }).join('')+'<div style="font-size:11px;color:var(--muted)">Restoring puts the project back in the active list — switch ⚡ Live on to re-create its calendar events.</div>'
+  :'<div class="empty">No old projects. Use 🗑 Remove on a project to move it here.</div>';
+  wrap.querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>{restoreProject(b.dataset.restore);el('archiveOv').classList.remove('show');});
+  wrap.querySelectorAll('[data-purge]').forEach(b=>b.onclick=()=>{ if(!confirm('Delete this project forever? This cannot be undone.'))return; ARCHIVE=ARCHIVE.filter(x=>x.id!==b.dataset.purge); save(); renderArchive(); renderProjects(); });
 }
 function renderAll(){renderView();renderGantt();renderUpcoming();renderProjects();}
 
@@ -1686,7 +1684,7 @@ function ganttPointerUp(e){
   el('dragLbl').classList.remove('show');
   const d=drag; drag=null; if(!d) return;
   if(d.node) d.node.classList.remove('dragging');
-  if(d.moved<4){ selId=d.p.id; renderDetail(); openEventPopover(d.p,d.type,d.key,e.clientX,e.clientY); return; }
+  if(d.moved<4){ selId=d.p.id; renderDetail(); openEventPopover(d.p,d.type,d.key,e.clientX,e.clientY); highlightRow(d.type,d.key); return; }
   const ddx=d.ddx||0, ddy=(d.type==='task'&&d.mode==='move')?(d.ddy||0):0;
   const {item}=getItem(d.p,d.type,d.key);
   if(item && (ddx!==0||ddy!==0)){
@@ -1707,6 +1705,14 @@ function ganttPointerUp(e){
   renderAll();
 }
 function closePopover(){ const p=el('eventPop'); if(p) p.classList.remove('show'); }
+function highlightRow(type,key){
+  const sw=el('scheduleWrap'); if(!sw||!sw.querySelector) return;
+  const row=sw.querySelector(`[data-rk="${type}:${key}"]`); if(!row) return;
+  sw.querySelectorAll('tr.flash').forEach(r=>r.classList.remove('flash'));
+  row.classList.add('flash');
+  if(row.scrollIntoView) try{ row.scrollIntoView({block:'center',behavior:'smooth'}); }catch(e){ row.scrollIntoView(); }
+  setTimeout(()=>{ try{ row.classList.remove('flash'); }catch(e){} },2600);
+}
 function openEventPopover(p,type,key,cx,cy){
   const {item}=getItem(p,type,key); if(!item) return;
   const pop=el('eventPop'); const tyc=type==='meeting'?'tt-meeting':type==='deadline'?'tt-deadline':'tt-task';
@@ -1788,6 +1794,8 @@ function openEventPopover(p,type,key,cx,cy){
 }
 el('gantt').addEventListener('pointerdown',ganttPointerDown);
 el('undoBtn').onclick=()=>undoLast();
+el('archiveBtn').onclick=()=>{renderArchive();el('archiveOv').classList.add('show');};
+(function(){const ac=el('archiveClose');if(ac)ac.onclick=()=>el('archiveOv').classList.remove('show');})();
 el('peopleBtn').onclick=()=>openPeople();
 (function(){const pc=el('peopleClose');if(pc)pc.onclick=()=>el('peopleOv').classList.remove('show');})();
 
@@ -1869,7 +1877,7 @@ function gColorId(hex){
 }
 /* Build a Google event resource from a console item — mirrors buildEvents rules */
 function buildGEvent(p,it,type){
-  const invited = type!=='task' || taskInvited(it);
+
   const noteSrc = type==='task' ? (it.att||[]) : (it.asgNote||[]);
   const names=noteSrc.map(a=>a.n||a.e).filter(Boolean);
   const noteLine=names.length?'Assigned to: '+names.join(', '):'';
@@ -1880,7 +1888,7 @@ function buildGEvent(p,it,type){
     description,
     colorId:gColorId(p.color),
     transparency:type==='meeting'?'opaque':'transparent',
-    reminders: invited ? {useDefault:false,overrides:[{method:'popup',minutes:10080},{method:'popup',minutes:1440}]} : {useDefault:true}
+    reminders:{useDefault:false,overrides:[{method:'popup',minutes:10080},{method:'popup',minutes:1440}]}
   };
   if(type==='task'){
     ev.start={date:it.start}; ev.end={date:addDays(it.end,1)};
@@ -1892,13 +1900,13 @@ function buildGEvent(p,it,type){
     ev.end={dateTime:`${it.date}T${endT}:00`,timeZone:'Asia/Kuwait'};
     ev.location=p.location||'';
   }
-  if(invited){
-    const ppl = type==='task' ? (it.att||[]) : (p.roster||[]);
-    const seen=new Set(); const att=[];
-    ppl.filter(a=>a.e).forEach(a=>{ if(!seen.has(a.e)){ att.push({email:a.e,displayName:a.n||undefined}); seen.add(a.e);} });
-    if(ORG && !seen.has(ORG)) att.push({email:ORG,displayName:ORGNAME||undefined});   // your Outlook stays current
-    if(att.length) ev.attendees=att;
-  }
+  // attendees: group for meetings/deadlines, task-assignees for tasks — and ALWAYS you,
+  // so every project event (even unassigned tasks) lands on your own calendar too.
+  const ppl = type==='task' ? (it.att||[]) : (p.roster||[]);
+  const seen=new Set(); const att=[];
+  ppl.filter(a=>a.e).forEach(a=>{ if(!seen.has(a.e)){ att.push({email:a.e,displayName:a.n||undefined}); seen.add(a.e);} });
+  if(ORG && !seen.has(ORG)) att.push({email:ORG,displayName:ORGNAME||undefined});
+  if(att.length) ev.attendees=att;
   return ev;
 }
 function gPlan(p){   // full sync: every included item
@@ -1950,21 +1958,30 @@ async function gExec(p,ops,hint){
   if(hint) hint.textContent='';
   return {done,fail};
 }
-async function gPush(p){
-  if(!gToken){ toast('Sign in with Google first'); return; }
-  if(!p.gcalId){ toast('Choose a calendar for this project first'); return; }
-  if(!p.locked && !p.live){ toast('🔒 Lock the project (or turn on ⚡ Live sync), then push'); return; }
+async function gFullSync(p){   // full sync — runs when ⚡ Live is switched ON
+  if(!gToken){ toast('Sign in with Google first'); return false; }
+  if(!p.gcalId){ toast('Choose a calendar for this project first'); return false; }
   // cross-project clash check
   const mine=(p.meetings||[]).filter(m=>m.include).map(m=>m.date+'|'+m.time);
   const clashes=[];
   PROJECTS.filter(x=>x.id!==p.id).forEach(x=>(x.meetings||[]).filter(m=>m.include).forEach(m=>{ if(mine.includes(m.date+'|'+m.time)) clashes.push(`${fmt(m.date)} ${m.time} vs [${x.tag}]`); }));
-  if(clashes.length && !confirm(`⚠ Meeting time clash with other projects:\n${[...new Set(clashes)].join('\n')}\n\nPush anyway?`)) return;
+  if(clashes.length && !confirm(`⚠ Meeting time clash with other projects:\n${[...new Set(clashes)].join('\n')}\n\nSync anyway?`)) return false;
   const ops=gPlan(p);
-  if(!ops.length){ toast('Nothing to push'); return; }
+  if(!ops.length){ return true; }
   const {done,fail}=await gExec(p,ops,el('pushHint'));
-  save();
-  toast(fail?`Synced with ${fail} error(s) — try again or check sign-in`:`☁ ${p.tag}: ${done} events synced — invites & updates sent automatically`);
+  await save0();
+  toast(fail?`Synced with ${fail} error(s) — check sign-in and try again`:`☁ ${p.tag}: ${done} events synced — invites & updates sent automatically`);
   renderProjects();
+  return !fail;
+}
+async function toggleLive(p){
+  if(p.live){ p.live=false; await save0(); renderAll(); toast(`${p.tag}: live sync off`); return; }
+  if(!gToken){ toast('Sign in with Google first'); return; }
+  if(!p.gcalId){ toast(selId===p.id?'Choose a calendar below first':'Open the project and choose a calendar first'); return; }
+  p.live=true; await save0(); renderAll();
+  toast(`⚡ ${p.tag}: live sync ON — syncing now…`);
+  const ok=await gFullSync(p);
+  if(!ok){ p.live=false; await save0(); renderAll(); }
 }
 
 /* ---- live sync: auto-push changed items ~4s after the last edit ---- */
@@ -2026,11 +2043,8 @@ function wireGcalControls(p){
   sel.onchange=e=>{ p.gcalId=e.target.value; save(); renderShare(p); wireGcalControls(p); };
   el('newGcal').disabled=!gToken;
   el('newGcal').onclick=async()=>{ const id=await gNewCalendar(p); if(id){ p.gcalId=id; save(); wireGcalControls(p); renderShare(p); } };
-  const pb=el('pushGcal');
-  pb.disabled=!(gToken&&p.gcalId&&(p.locked||p.live));
-  pb.onclick=()=>gPush(p);
   const ph=el('pushHint');
-  if(ph&&!ph.textContent) ph.textContent = !gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar above.':p.live?'⚡ Live: edits sync automatically; the button force-pushes everything.':!p.locked?'🔒 Lock the project then push — or turn on ⚡ Live sync above.':'Ready — pushes creates/updates/deletions; attendees are notified automatically.';
+  if(ph&&!ph.textContent) ph.textContent = !gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar, then switch ⚡ Live on (top right) to sync.':p.live?'⚡ Live: everything syncs automatically — creates, updates and deletions; attendees are notified.':'Switch ⚡ Live on (top right of this project) to sync it to this calendar.';
   renderShare(p);
 }
 gInitWhenLoaded();
@@ -2095,7 +2109,7 @@ function restoreProject(id){
   const p=ARCHIVE.splice(i,1)[0];
   p.locked=false; PROJECTS.push(p); selId=p.id;
   save(); renderAll();
-  toast(`“${p.name}” restored — press ☁ Push to put its events back on the calendar`);
+  toast(`“${p.name}” restored — switch ⚡ Live on to put its events back on the calendar`);
 }
 function undoLast(){
   if(!UNDO){ toast('Nothing to undo'); return; }
@@ -2163,20 +2177,53 @@ function applyPulled(p,key,gev){   // calendar wins for date/time/title
   }
   return changed;
 }
+function adoptEvent(p,gev){   // an event created directly in Google Calendar with this project's [TAG]
+  const raw=(gev.summary||'').replace(/^\[[^\]]*\]\s*/,'').trim();
+  p.gmap=p.gmap||{}; p.gpushed=p.gpushed||{};
+  const rs={}; (gev.attendees||[]).forEach(a=>{ if(a.email&&!a.self&&!a.organizer) rs[a.email]=a.responseStatus||'needsAction'; });
+  if(gev.start&&gev.start.date){                       // all-day => task
+    const key=newKey('t');
+    const end=gev.end&&gev.end.date?addDays(gev.end.date,-1):gev.start.date;
+    p.tasks.push({key,label:raw||'Imported task',start:gev.start.date,end,include:true,desc:'',ttype:'concept',att:[],rsvp:rs});
+    p.gmap[key]=gev.id; p.gpushed[key]=0; return true;
+  }
+  if(gev.start&&gev.start.dateTime){                   // timed => deadline if prefixed, else meeting
+    const d=gev.start.dateTime.slice(0,10), t=gev.start.dateTime.slice(11,16);
+    if(/^DEADLINE — /.test(raw)){
+      const key=newKey('d');
+      p.deadlines.push({key,label:raw.replace(/^DEADLINE — /,''),date:d,time:t,include:true,desc:'',rsvp:rs});
+      p.gmap[key]=gev.id; p.gpushed[key]=0;
+    }else{
+      const key=newKey('m');
+      p.meetings.push({key,label:raw||'Imported meeting',date:d,time:t,include:true,desc:'',rsvp:rs});
+      p.gmap[key]=gev.id; p.gpushed[key]=0;
+    }
+    return true;
+  }
+  return false;
+}
 async function gPoll(){
   if(!gToken) return;
   let any=false;
   for(const p of PROJECTS){
-    if(!p.gcalId||!p.gmap||!Object.keys(p.gmap).length) continue;
+    if(!p.gcalId) continue;
     let r;
     try{ r=await gapi.client.calendar.events.list({calendarId:p.gcalId,maxResults:2500,showDeleted:true}); }
     catch(e){ if(e&&e.status===401){ gToken=null; stopPolling(); renderAuth(); } continue; }
     const byId={}; (r.result.items||[]).forEach(ev=>byId[ev.id]=ev);
-    // sync-state per pushed event
-    Object.entries(p.gmap).forEach(([key,gid])=>{
+    // 1) sync-state per event the app pushed
+    Object.entries(p.gmap||{}).forEach(([key,gid])=>{
       const gev=byId[gid];
       if(!gev){ const f=findByKey(p,key); if(f&&!f.it.gmissing){ f.it.gmissing=true; any=true; } return; }
       if(applyPulled(p,key,gev)) any=true;
+    });
+    // 2) ADOPT events created directly in the calendar with this project's [TAG]
+    const mappedIds=new Set(Object.values(p.gmap||{}));
+    (r.result.items||[]).forEach(gev=>{
+      if(gev.status==='cancelled') return;
+      if(mappedIds.has(gev.id)) return;
+      if(!(gev.summary||'').startsWith(`[${p.tag}]`)) return;
+      if(adoptEvent(p,gev)){ any=true; toast(`⇩ [${p.tag}] adopted “${(gev.summary||'').replace(/^\[[^\]]*\]\s*/,'')}” from the calendar`); }
     });
   }
   if(any){ await save0(); renderAll(); }
