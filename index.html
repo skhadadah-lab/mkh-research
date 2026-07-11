@@ -1180,6 +1180,7 @@ function renderProjects(){
   host.innerHTML=html;
   host.querySelectorAll('[data-unlock]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.unlock);if(pr){pr.locked=false;selId=pr.id;closePopover();save();renderAll();}});
   host.querySelectorAll('[data-livetog]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.livetog);if(pr)toggleLive(pr);});
+  host.querySelectorAll('[data-sendinv]').forEach(b=>b.onclick=e=>{e.stopPropagation();manualSendInvites(b.dataset.sendinv);});
   host.querySelectorAll('[data-dlproj]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pr=PROJECTS.find(x=>x.id===b.dataset.dlproj);if(pr)exportProjectZip(pr);});
   host.querySelectorAll('[data-openproj2]').forEach(b=>b.onclick=e=>{e.stopPropagation();selId=b.dataset.openproj2;save();renderAll();});
   host.querySelectorAll('[data-openproj]').forEach(sec=>sec.onclick=()=>{selId=sec.dataset.openproj;save();renderAll();});
@@ -2060,7 +2061,7 @@ async function gExec(p,ops,hint){
         await gCall(()=>gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev}));
         p.gpushed[op.key]=op.rev||0;
         if(p.pendInv[op.key]){ delete p.pendInv[op.key];
-          if(!Object.keys(p.pendInv).length&&p.pendTotal){ p.invDoneAt=Date.now(); p.pendTotal=0; } }
+          if(!Object.keys(p.pendInv).length&&p.pendTotal){ p.invDoneAt=Date.now(); p.pendTotal=0; p.pendSince=0; } }
         done++;
       }else{
         try{ await gCall(()=>gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'})); }
@@ -2090,7 +2091,7 @@ async function gExec(p,ops,hint){
   p.deleted=(p.deleted||[]).filter(d=>!d.gid);
   if(hint) hint.textContent='';
   const owe=Object.keys(p.pendInv).length;
-  if(deferGuests&&owe>0) p.pendTotal=Math.max(p.pendTotal||0,owe);
+  if(deferGuests&&owe>0){ p.pendTotal=Math.max(p.pendTotal||0,owe); if(!p.pendSince) p.pendSince=Date.now(); }
   if(aborted){
     toast(`⛔ Google is blocking event creation (${(lastErr||'usage limit').slice(0,80)}). ${done} synced, ${ops.length-done} remaining — saved. Try ⚡ Live again in a few hours; only the missing ones will be sent.`);
   }else if(deferGuests){
@@ -2160,17 +2161,32 @@ function invitePill(p){
   const total=p.pendTotal||0;
   if(owe>0&&total>0){
     const sent=Math.max(0,total-owe), pct=Math.round(sent/total*100);
-    return `<span class="pill" title="Google is rate-limiting invitations; they send automatically — press ↻ to try now" style="padding:3px 10px;background:#EAF3FF;color:#1B5CB8;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:#CDE3FF;z-index:0"></span><span style="position:relative;z-index:1">✉ Sending invites ${sent}/${total}</span></span>`;
+    return `<span class="pill" data-sendinv="${p.id}" title="CLICK to try sending now. Also retried automatically every 30 min while the app is open, and at every sign-in." style="cursor:pointer;padding:3px 10px;background:#EAF3FF;color:#1B5CB8;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:#CDE3FF;z-index:0"></span><span style="position:relative;z-index:1">✉ Sending invites ${sent}/${total} — click to try now</span></span>`;
   }
   if(owe===0&&p.invDoneAt&&Date.now()-p.invDoneAt<48*3600*1000){
     return `<span class="pill ok" style="padding:3px 10px" title="All queued invitations were delivered">✉ Invites sent ✓</span>`;
   }
   return '';
 }
+async function manualSendInvites(id){
+  const p=PROJECTS.find(x=>x.id===id); if(!p) return;
+  if(!gToken){ toast('Sign in with Google first'); return; }
+  toast('✉ Trying to send queued invitations…');
+  const okAll=await deliverOwed(true,id);
+  renderProjects(); if(selId===id&&el('scheduleWrap')) renderDetail();
+  if(!okAll){
+    const age=p.pendSince?Date.now()-p.pendSince:0;
+    if(age>72*3600*1000){
+      toast('⛔ Google is still blocking after 3+ days — unusual. Fallback: unlock the project and use ⤓ Files (.ics backup) to email the invitations manually.');
+    }else{
+      toast('⛔ Google still blocking — will keep retrying automatically (every 30 min while open, and at each sign-in).');
+    }
+  }
+}
 /* ---- deliver invitations owed from a Google block (user-triggered or sign-in) ---- */
-async function deliverOwed(quiet){
+async function deliverOwed(quiet,onlyId){
   let attempted=false, allOk=true;
-  for(const p of PROJECTS.filter(x=>x.gcalId&&x.pendInv&&Object.keys(x.pendInv).length)){
+  for(const p of PROJECTS.filter(x=>x.gcalId&&x.pendInv&&Object.keys(x.pendInv).length&&(!onlyId||x.id===onlyId))){
     attempted=true;
     try{
       const {done,fail}=await gExec(p,gChangedOps(p,true),null);
@@ -2514,6 +2530,12 @@ async function gPoll(){
   }
   if(any){ await save0(); renderAll(); }
   await cloudSync(false);   // pick up portfolio changes made in another browser/device
+  // auto-retry owed invitations at most every 30 minutes while the app is open
+  if(PROJECTS.some(x=>x.pendInv&&Object.keys(x.pendInv).length) && Date.now()-(window._lastInvAuto||0)>30*60*1000){
+    window._lastInvAuto=Date.now();
+    const ok=await deliverOwed(true);
+    if(ok) renderAll();
+  }
 }
 function rsvpClass(it){
   const rs=it.rsvp; if(!rs) return '';
