@@ -1906,6 +1906,11 @@ async function afterSignIn(){
   await cloudSync(true);   // pull your portfolio from your Google account (or back it up if local is newer)
   renderAuth(); renderProjects();
   startPolling();
+  // deliver any invitations still owed from a previous Google block
+  for(const p of PROJECTS.filter(x=>x.gcalId&&x.pendInv&&Object.keys(x.pendInv).length)){
+    try{ const {done,fail}=await gExec(p,gChangedOps(p,true),null);
+      if(done&&!fail) toast(`✉ ${p.tag}: queued invitations delivered`); await save0(); }catch(e){}
+  }
 }
 const gErr=e=>(e&&e.result&&e.result.error&&e.result.error.message)||(e&&e.message)||'unknown error';
 
@@ -1973,11 +1978,12 @@ function gPlan(p){   // full sync: every included item
   (p.deleted||[]).filter(d=>d.gid).forEach(d=>ops.push({kind:'delete',gid:d.gid,key:d.key}));
   return ops;
 }
-function gChangedOps(p){   // live sync: only what changed since last push
+function gChangedOps(p,includePend){   // changed since last push; includePend also retries owed invitations
   p.gpushed=p.gpushed||{};
   return gPlan(p).filter(op=>{
     if(op.kind==='delete') return true;
     if(op.kind==='insert') return true;
+    if(includePend&&p.pendInv&&p.pendInv[op.key]) return true;   // invitations owed from a Google block
     return (op.rev||0)>(p.gpushed[op.key]??-1);
   });
 }
@@ -2000,35 +2006,62 @@ async function gCall(fn){
   }
 }
 async function gExec(p,ops,hint){
-  let done=0,fail=0,i=0,lastErr='';
-  p.gmap=p.gmap||{}; p.gpushed=p.gpushed||{};
-  const pace=ops.length>2 ? 700 : 0;   // bulk syncs: ~1.4 calls/sec keeps Google happy
+  let done=0,fail=0,i=0,lastErr='',aborted=false,deferGuests=false,asked=false;
+  p.gmap=p.gmap||{}; p.gpushed=p.gpushed||{}; p.pendInv=p.pendInv||{};
+  const pace=ops.length>2 ? 700 : 0;
+  const stripGuests=ev=>{const e2={...ev};delete e2.attendees;return e2;};
   for(const op of ops){
     if(hint) hint.textContent=`Syncing ${++i}/${ops.length}…`;
     if(pace&&i>1) await sleep(pace);
     try{
       if(op.kind==='insert'){
-        const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}));
-        p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++;
+        if(deferGuests){
+          const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'none',resource:stripGuests(op.ev)}));
+          p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0;
+          if(op.ev.attendees&&op.ev.attendees.length) p.pendInv[op.key]=1;
+          done++;
+        }else{
+          const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev}));
+          p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++;
+        }
       }else if(op.kind==='update'){
         await gCall(()=>gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev}));
-        p.gpushed[op.key]=op.rev||0; done++;
+        p.gpushed[op.key]=op.rev||0; delete p.pendInv[op.key];   // invitations delivered
+        done++;
       }else{
         try{ await gCall(()=>gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'})); }
         catch(e){ const c=e&&e.status; if(c!==404&&c!==410) throw e; }
-        if(op.unmap){ delete p.gmap[op.key]; delete p.gpushed[op.key]; }
+        if(op.unmap){ delete p.gmap[op.key]; delete p.gpushed[op.key]; delete p.pendInv[op.key]; }
         done++;
       }
     }catch(e){
       if(op.kind==='update' && (e.status===404||e.status===410)){
         try{ const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'all',resource:op.ev})); p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0; done++; }
-        catch(e2){ fail++; lastErr=gErr(e2); }
-      } else { fail++; lastErr=gErr(e); }
+        catch(e2){ fail++; lastErr=gErr(e2); if(gRateErr(e2)) aborted=true; }
+      }else if(op.kind==='insert' && gRateErr(e) && !asked){
+        asked=true;
+        if(confirm('⛔ Google is temporarily blocking event invitations (usage limit from today\'s testing).\n\nCreate the remaining events on YOUR calendar now WITHOUT inviting the group, and send the invitations automatically once Google allows it (usually later today / tomorrow)?\n\nOK = yes, fill my calendar now, invite later\nCancel = stop; retry everything in a few hours')){
+          deferGuests=true;
+          try{
+            const r=await gCall(()=>gapi.client.calendar.events.insert({calendarId:p.gcalId,sendUpdates:'none',resource:stripGuests(op.ev)}));
+            p.gmap[op.key]=r.result.id; p.gpushed[op.key]=op.rev||0;
+            if(op.ev.attendees&&op.ev.attendees.length) p.pendInv[op.key]=1;
+            done++;
+          }catch(e3){ fail++; lastErr=gErr(e3); aborted=true; }
+        }else{ fail++; lastErr=gErr(e); aborted=true; }
+      }else{ fail++; lastErr=gErr(e); if(gRateErr(e)) aborted=true; }
+      if(aborted) break;
     }
   }
   p.deleted=(p.deleted||[]).filter(d=>!d.gid);
   if(hint) hint.textContent='';
-  if(fail&&lastErr) toast('Google said: '+lastErr.slice(0,120));
+  const owe=Object.keys(p.pendInv).length;
+  if(aborted){
+    toast(`⛔ Google is blocking event creation (${(lastErr||'usage limit').slice(0,80)}). ${done} synced, ${ops.length-done} remaining — saved. Try ⚡ Live again in a few hours; only the missing ones will be sent.`);
+  }else if(deferGuests){
+    toast(`☁ ${p.tag}: ${done} synced — ${owe} event(s) are on YOUR calendar; group invitations will send automatically when Google allows (kept in queue).`);
+  }else if(fail&&lastErr){ toast('Google said: '+lastErr.slice(0,120)); }
+  else if(owe===0&&done>0){ /* normal success toast handled by callers */ }
   return {done,fail};
 }
 async function gFullSync(p){   // full sync — runs when ⚡ Live is switched ON
@@ -2039,7 +2072,7 @@ async function gFullSync(p){   // full sync — runs when ⚡ Live is switched O
   const clashes=[];
   PROJECTS.filter(x=>x.id!==p.id).forEach(x=>(x.meetings||[]).filter(m=>m.include).forEach(m=>{ if(mine.includes(m.date+'|'+m.time)) clashes.push(`${fmt(m.date)} ${m.time} vs [${x.tag}]`); }));
   if(clashes.length && !confirm(`⚠ Meeting time clash with other projects:\n${[...new Set(clashes)].join('\n')}\n\nSync anyway?`)) return false;
-  const ops=gChangedOps(p);   // only new / changed / deleted items — unchanged events are never re-sent
+  const ops=gChangedOps(p,true);   // new / changed / deleted + any invitations still owed
   if(!ops.length){ toast(`☁ ${p.tag}: already up to date — nothing re-sent`); return true; }
   const {done,fail}=await gExec(p,ops,el('pushHint'));
   await save0();
