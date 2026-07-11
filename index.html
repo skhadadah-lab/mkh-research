@@ -991,6 +991,7 @@ function renderDetail(){
         <button class="btn sm" id="newGcal">＋ New calendar</button>
       </div>
       <div id="pushHint" style="font-size:11.5px;color:var(--muted);margin-top:6px"></div>
+      <div style="margin-top:8px"><button class="btn ghost sm" id="fixDup" title="Removes duplicate calendar events left by interrupted syncs (keeps the linked copy; no emails)">🧹 Fix duplicates</button></div>
     </div>
     <div class="field"><label>Share this calendar (per-calendar — only this one, not your others)</label>
       <div id="shareWrap"><div style="font-size:11.5px;color:var(--muted)">Sign in and choose a calendar to manage sharing.</div></div>
@@ -1043,7 +1044,7 @@ function renderDetail(){
   el('lockBtn').className='btn sm'+(locked?' primary':'');
   el('lockBadge').innerHTML=locked?'<span class="pill warn" style="padding:3px 10px">🔒 Locked</span>':'';
   [sw,stw,el('libraryWrap')].forEach(root=>root.querySelectorAll('input,select,textarea,button').forEach(n=>{
-    if(n.id==='zipOne'||n.id==='fGcal'||n.id==='newGcal'||n.id==='pushGcal'||n.id==='fLive'||n.id==='shareAdd'||n.id==='shareEmail'||n.id==='shareRole'||n.dataset.unshare)return;  // google + export controls manage their own state
+    if(n.id==='zipOne'||n.id==='fGcal'||n.id==='newGcal'||n.id==='pushGcal'||n.id==='fLive'||n.id==='fixDup'||n.id==='shareAdd'||n.id==='shareEmail'||n.id==='shareRole'||n.dataset.unshare)return;  // google + export controls manage their own state
     n.disabled=locked;
   }));
   el('zipOne').disabled=!locked;
@@ -1895,7 +1896,7 @@ function renderAuth(){
     return;
   }
   a.innerHTML=`<span class="pill ok" style="gap:6px">☁ ${gEmail||'connected'}</span> <button class="btn ghost sm" id="gRefresh" title="Pull RSVP + calendar changes now">↻</button>`;
-  const gr=el('gRefresh'); if(gr) gr.onclick=()=>{ toast('Refreshing from Google…'); gPoll().then(()=>toast('Up to date')).catch(()=>toast('Refresh failed — try signing in again')); };
+  const gr=el('gRefresh'); if(gr) gr.onclick=async()=>{ toast('Refreshing from Google…'); try{ await gPoll(); const owed=PROJECTS.some(p=>p.pendInv&&Object.keys(p.pendInv).length); if(owed){ await deliverOwed(true); } if(PROJECTS.some(p=>p.pendInv&&Object.keys(p.pendInv).length)) toast('Up to date — invitations still queued (Google not ready yet)'); else toast('Up to date'); }catch(e){ toast('Refresh failed — try signing in again'); } };
 }
 async function afterSignIn(){
   try{
@@ -1906,11 +1907,7 @@ async function afterSignIn(){
   await cloudSync(true);   // pull your portfolio from your Google account (or back it up if local is newer)
   renderAuth(); renderProjects();
   startPolling();
-  // deliver any invitations still owed from a previous Google block
-  for(const p of PROJECTS.filter(x=>x.gcalId&&x.pendInv&&Object.keys(x.pendInv).length)){
-    try{ const {done,fail}=await gExec(p,gChangedOps(p,true),null);
-      if(done&&!fail) toast(`✉ ${p.tag}: queued invitations delivered`); await save0(); }catch(e){}
-  }
+  deliverOwed(true);   // attempt any invitations owed from a previous Google block
 }
 const gErr=e=>(e&&e.result&&e.result.error&&e.result.error.message)||(e&&e.message)||'unknown error';
 
@@ -2090,7 +2087,52 @@ async function toggleLive(p){
   if(!ok){ p.live=false; await save0(); renderAll(); }
 }
 
-/* ---- live sync: auto-push changed items ~4s after the last edit ---- */
+/* ---- maintenance: remove duplicate events (orphans from interrupted syncs) ---- */
+async function cleanDuplicates(p){
+  if(!gToken){ toast('Sign in with Google first'); return; }
+  if(!p.gcalId){ toast('No calendar assigned'); return; }
+  let r;
+  try{ r=await gapi.client.calendar.events.list({calendarId:p.gcalId,maxResults:2500}); }
+  catch(e){ toast('Could not read calendar: '+gErr(e)); return; }
+  const live=(r.result.items||[]).filter(e=>e.status!=='cancelled');
+  const keyOf=e=>[(e.summary||'').trim(),JSON.stringify(e.start||{}),JSON.stringify(e.end||{})].join('|');
+  const byKey={}; live.forEach(e=>{(byKey[keyOf(e)]=byKey[keyOf(e)]||[]).push(e);});
+  const mapped=new Set(Object.values(p.gmap||{}));
+  const gidToAppKey={}; Object.entries(p.gmap||{}).forEach(([k,g])=>{gidToAppKey[g]=k;});
+  let delCal=0, delApp=0;
+  for(const arr of Object.values(byKey)){
+    if(arr.length<2) continue;
+    const keeper=arr.find(e=>mapped.has(e.id))||arr[0];
+    for(const e of arr){
+      if(e.id===keeper.id) continue;
+      try{ await gCall(()=>gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:e.id,sendUpdates:'none'})); delCal++; }
+      catch(err){ continue; }
+      const ak=gidToAppKey[e.id];
+      if(ak){   // this duplicate had been adopted into the app — remove the duplicate app item too
+        ['meetings','deadlines','tasks'].forEach(n=>{ const i=(p[n]||[]).findIndex(x=>x.key===ak); if(i>=0){ p[n].splice(i,1); delApp++; } });
+        delete p.gmap[ak]; delete (p.gpushed||{})[ak]; delete (p.pendInv||{})[ak];
+      }
+    }
+  }
+  await save0(); renderAll();
+  toast(delCal?`🧹 Removed ${delCal} duplicate calendar event(s)${delApp?` and ${delApp} duplicate app item(s)`:''} — no emails sent`:'🧹 No duplicates found');
+}
+/* ---- deliver invitations owed from a Google block (user-triggered or sign-in) ---- */
+async function deliverOwed(quiet){
+  let attempted=false, allOk=true;
+  for(const p of PROJECTS.filter(x=>x.gcalId&&x.pendInv&&Object.keys(x.pendInv).length)){
+    attempted=true;
+    try{
+      const {done,fail}=await gExec(p,gChangedOps(p,true),null);
+      if(fail) allOk=false;
+      else if(done) toast(`✉ ${p.tag}: queued invitations delivered`);
+      await save0();
+    }catch(e){ allOk=false; }
+  }
+  if(!attempted && !quiet) toast('No invitations queued');
+  return attempted&&allOk;
+}
+
 let liveTimer=null, liveBusy=false;
 function scheduleLiveSync(){
   if(!gToken) return;
@@ -2150,7 +2192,9 @@ function wireGcalControls(p){
   el('newGcal').disabled=!gToken;
   el('newGcal').onclick=async()=>{ const id=await gNewCalendar(p); if(id){ p.gcalId=id; save(); wireGcalControls(p); renderShare(p); } };
   const ph=el('pushHint');
-  if(ph&&!ph.textContent) ph.textContent = !gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar, then switch ⚡ Live on (top right) to sync.':p.live?'⚡ Live: everything syncs automatically — creates, updates and deletions; attendees are notified.':'Switch ⚡ Live on (top right of this project) to sync it to this calendar.';
+  const owe=p.pendInv?Object.keys(p.pendInv).length:0;
+  if(ph&&!ph.textContent) ph.textContent = (!gToken?'Sign in with Google (top bar) to enable.':!p.gcalId?'Choose or create a calendar, then switch ⚡ Live on (top right) to sync.':p.live?'⚡ Live: everything syncs automatically — creates, updates and deletions; attendees are notified.':'Switch ⚡ Live on (top right of this project) to sync it to this calendar.')+(owe?` ✉ ${owe} invitation(s) queued — press ↻ (top bar) to try sending now.`:'');
+  const fd=el('fixDup'); if(fd){ fd.disabled=!(gToken&&p.gcalId); fd.onclick=()=>{ if(confirm('Scan this project\'s calendar and remove duplicate events?\n\nThe copy linked to the app is kept; extras are deleted silently (no emails).')) cleanDuplicates(p); }; }
   renderShare(p);
 }
 gInitWhenLoaded();
