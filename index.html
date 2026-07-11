@@ -283,6 +283,7 @@
   <label class="pill" style="gap:8px">View <select id="viewSel" style="border:none;padding:2px 4px"></select></label>
   <button class="btn ghost sm" id="undoBtn" title="Undo the last remove/delete">↩ Undo</button>
   <button class="btn sm" id="archiveBtn" title="Removed / completed projects — restore anytime">🗂 Old projects</button>
+  <button class="btn ghost sm" id="dellogBtn" title="Every deleted event, with when it was deleted">🗑 Deleted</button>
   <button class="btn sm" id="peopleBtn" title="One profile per person, shared across projects">👥 People</button>
   <button class="btn sm" id="saveJson">Save file</button>
   <button class="btn sm" id="loadJson">Load file</button>
@@ -342,6 +343,12 @@
   <div class="modal-h"><h2>🗂 Old / Completed projects</h2><span class="sub">removed from the calendar · restore anytime</span></div>
   <div class="modal-b" id="archiveWrap"></div>
   <div class="modal-f"><button class="btn primary sm" id="archiveClose">Done</button></div>
+</div></div>
+
+<div class="overlay" id="dellogOv"><div class="modal" style="max-width:680px">
+  <div class="modal-h"><h2>🗑 Deleted events</h2><span class="sub">from the app or Google Calendar</span></div>
+  <div class="modal-b" id="dellogBody" style="max-height:420px;overflow:auto"></div>
+  <div class="modal-f"><button class="btn ghost sm" id="dellogClear">Clear list</button> <button class="btn primary sm" id="dellogClose">Done</button></div>
 </div></div>
 
 <div class="overlay" id="peopleOv"><div class="modal" style="max-width:560px">
@@ -411,7 +418,7 @@ const TASK_CAT=[
 ];
 const PALETTE=['#2E9E5B','#2F6DB5','#D98A0B','#7A4FB5','#C0453B','#14808A','#B5459A','#7E8A2E'];
 
-let PROJECTS=[], ARCHIVE=[], PEOPLE=[], selId=null, viewFilter='all', DAYW=18, ORG='', ORGNAME='';
+let PROJECTS=[], ARCHIVE=[], PEOPLE=[], DELLOG=[], selId=null, viewFilter='all', DAYW=18, ORG='', ORGNAME='';
 let upName='', upProj='', upType='';   // Upcoming panel filters
 let hiddenProj=new Set(), showTypes={meeting:true,deadline:true,task:true};   // timeline filters
 let UNDO=null;   // last destructive action
@@ -591,7 +598,7 @@ const itemEnd=it=>it.type==='task'?it.end:it.date;
 let SAVEDAT=0;
 async function save0(){
   SAVEDAT=Date.now();
-  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,dellog:DELLOG,org:ORG,orgName:ORGNAME});
   try{ if(window.storage&&window.storage.set) await window.storage.set('portfolio_v2',data,false); }catch(e){}
   try{ localStorage.setItem('rp_portfolio_v2',data); }catch(e){}
   try{ scheduleCloudPush(); }catch(e){}
@@ -604,7 +611,7 @@ async function load(){
   let raw=null;
   try{ if(window.storage&&window.storage.get){const r=await window.storage.get('portfolio_v2',false);if(r&&r.value)raw=r.value;} }catch(e){}
   if(!raw){ try{ raw=localStorage.getItem('rp_portfolio_v2'); }catch(e){} }
-  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; ORG=j.org||''; ORGNAME=j.orgName||''; SAVEDAT=j.savedAt||0; }catch(e){ PROJECTS=[]; } }
+  if(raw){ try{const j=JSON.parse(raw); PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; DELLOG=j.dellog||[]; ORG=j.org||''; ORGNAME=j.orgName||''; SAVEDAT=j.savedAt||0; }catch(e){ PROJECTS=[]; } }
   if(!PROJECTS.length && !ARCHIVE.length) PROJECTS=[DMOSA()];
   // seed the People directory from any rosters not yet in it (dedup by email)
   const known=new Set(PEOPLE.map(x=>x.e));
@@ -1056,6 +1063,7 @@ function renderDetail(){
     lb.onclick=()=>toggleLive(p);
   }
   const tb=el('tmplBtn'); if(tb) tb.onclick=()=>duplicateAsTemplate(p);
+  const cb2=el('cleanBtn'); if(cb2){ cb2.disabled=!(gToken&&p.gcalId); cb2.onclick=()=>{ if(confirm("Scan this project's calendar and remove duplicate events?\n\nThe copy linked to the app is kept; extras are deleted silently (no emails).")) cleanDuplicates(p); }; }
   el('delProj').onclick=()=>removeProject(p);
 }
 
@@ -1134,6 +1142,7 @@ const DETAIL_MARKUP=`
         <div class="spacer"></div>
         <button class="btn sm" id="liveBtn">⚡ Live: off</button>
         <button class="btn sm" id="lockBtn">🔒 Lock to export</button>
+        <button class="btn ghost sm" id="cleanBtn" title="Remove duplicate calendar events (keeps linked copies; no emails)">🧹</button>
         <button class="btn ghost sm" id="tmplBtn" title="New project from this one's structure, dates shifted to today">⧉ Template</button>
         <button class="btn ghost sm" id="delProj" title="Remove project — deletes its calendar events (no emails) and moves it to Old / Completed">🗑 Remove</button>
       </div>
@@ -1158,6 +1167,7 @@ function renderProjects(){
         <span class="swatch" style="background:${p.color}"></span>
         <div class="pbmeta"><span class="pbname">${p.name}</span><span class="pbsub">[${p.tag}] · ${nm} mtg · ${nd} ddl · ${nt} task</span></div>
         ${p.live?'<span class="pill" style="padding:3px 10px;background:#FFF3D6;color:#8A6100">⚡ Live</span>':''}
+        ${invitePill(p)}
         ${p.locked?'<span class="pill warn" style="padding:3px 10px">🔒 Locked</span>':'<span class="pill" style="background:var(--line2);color:var(--muted);padding:3px 10px">Unlocked</span>'}
         <div class="spacer"></div>
         <button class="btn ${p.live?'primary ':''}ghost sm" data-livetog="${p.id}" title="Toggle live sync">${p.live?'⚡ Live ON':'⚡ Live off'}</button>
@@ -1267,11 +1277,25 @@ function buildCancellations(p){
     return ev.join('\r\n');
   });
 }
+/* ---- deletion log ---- */
+function logDeletion(p,it,type,source){
+  const when=type==='task'?`${fmt(it.start)} → ${fmt(it.end)}`:`${fmt(it.date)} ${it.time||''}`.trim();
+  DELLOG.unshift({tag:p.tag,pname:p.name,type,label:it.label,when,source,deletedAt:new Date().toISOString()});
+  if(DELLOG.length>500) DELLOG.length=500;
+}
+function removeItemByKey(p,key){
+  for(const [arrName,type] of [['meetings','meeting'],['deadlines','deadline'],['tasks','task']]){
+    const i=(p[arrName]||[]).findIndex(x=>x.key===key);
+    if(i>=0){ const it=p[arrName][i]; p[arrName].splice(i,1); return {it,type}; }
+  }
+  return null;
+}
 function recordDeletion(p,it,type){
   p.deleted=p.deleted||[];
   const start=type==='task'?it.start:it.date;
   p.deleted.push({uid:`${p.tag}-${it.key}-${basic(start)}@mkh-portfolio`, gid:(p.gmap||{})[it.key]||null, key:it.key, summary:`[${p.tag}] ${type==='deadline'?'DEADLINE — ':''}${it.label}`, start, timed:type!=='task', time:it.time||'12:00', seq:(it.rev||0)+5});
   if(p.gmap) delete p.gmap[it.key];
+  logDeletion(p,it,type,'app');
 }
 function download(text,fname){const b=new Blob([text],{type:'text/calendar'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=fname;a.click();URL.revokeObjectURL(u);}
 
@@ -1847,6 +1871,17 @@ function openEventPopover(p,type,key,cx,cy){
 el('gantt').addEventListener('pointerdown',ganttPointerDown);
 el('undoBtn').onclick=()=>undoLast();
 el('archiveBtn').onclick=()=>{renderArchive();el('archiveOv').classList.add('show');};
+el('dellogBtn').onclick=()=>{renderDellog();el('dellogOv').classList.add('show');};
+(function(){const c=el('dellogClose');if(c)c.onclick=()=>el('dellogOv').classList.remove('show');
+const cl=el('dellogClear');if(cl)cl.onclick=()=>{if(confirm('Clear the deleted-events list? (Does not affect any calendar.)')){DELLOG=[];save();renderDellog();}};})();
+function renderDellog(){
+  const b=el('dellogBody'); if(!b) return;
+  b.innerHTML=DELLOG.length?('<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+
+    '<thead><tr style="text-align:left;color:var(--muted)"><th style="padding:4px 8px">Deleted</th><th style="padding:4px 8px">Project</th><th style="padding:4px 8px">Type</th><th style="padding:4px 8px">Event</th><th style="padding:4px 8px">Was scheduled</th><th style="padding:4px 8px">Via</th></tr></thead><tbody>'+
+    DELLOG.map(d=>{const dt=new Date(d.deletedAt);const ds=dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+dt.toTimeString().slice(0,5);
+      return `<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px;white-space:nowrap">${ds}</td><td style="padding:5px 8px">[${d.tag}]</td><td style="padding:5px 8px">${d.type}</td><td style="padding:5px 8px">${(d.label||'').replace(/</g,'&lt;')}</td><td style="padding:5px 8px;white-space:nowrap">${d.when||''}</td><td style="padding:5px 8px">${d.source==='google'?'Google':'app'}</td></tr>`;}).join('')+
+    '</tbody></table>'):'<div class="empty">Nothing deleted yet.</div>';
+}
 (function(){const ac=el('archiveClose');if(ac)ac.onclick=()=>el('archiveOv').classList.remove('show');})();
 el('peopleBtn').onclick=()=>openPeople();
 (function(){const pc=el('peopleClose');if(pc)pc.onclick=()=>el('peopleOv').classList.remove('show');})();
@@ -2023,7 +2058,9 @@ async function gExec(p,ops,hint){
         }
       }else if(op.kind==='update'){
         await gCall(()=>gapi.client.calendar.events.patch({calendarId:p.gcalId,eventId:p.gmap[op.key],sendUpdates:'all',resource:op.ev}));
-        p.gpushed[op.key]=op.rev||0; delete p.pendInv[op.key];   // invitations delivered
+        p.gpushed[op.key]=op.rev||0;
+        if(p.pendInv[op.key]){ delete p.pendInv[op.key];
+          if(!Object.keys(p.pendInv).length&&p.pendTotal){ p.invDoneAt=Date.now(); p.pendTotal=0; } }
         done++;
       }else{
         try{ await gCall(()=>gapi.client.calendar.events.delete({calendarId:p.gcalId,eventId:op.gid,sendUpdates:'all'})); }
@@ -2053,6 +2090,7 @@ async function gExec(p,ops,hint){
   p.deleted=(p.deleted||[]).filter(d=>!d.gid);
   if(hint) hint.textContent='';
   const owe=Object.keys(p.pendInv).length;
+  if(deferGuests&&owe>0) p.pendTotal=Math.max(p.pendTotal||0,owe);
   if(aborted){
     toast(`⛔ Google is blocking event creation (${(lastErr||'usage limit').slice(0,80)}). ${done} synced, ${ops.length-done} remaining — saved. Try ⚡ Live again in a few hours; only the missing ones will be sent.`);
   }else if(deferGuests){
@@ -2116,6 +2154,18 @@ async function cleanDuplicates(p){
   }
   await save0(); renderAll();
   toast(delCal?`🧹 Removed ${delCal} duplicate calendar event(s)${delApp?` and ${delApp} duplicate app item(s)`:''} — no emails sent`:'🧹 No duplicates found');
+}
+function invitePill(p){
+  const owe=p.pendInv?Object.keys(p.pendInv).length:0;
+  const total=p.pendTotal||0;
+  if(owe>0&&total>0){
+    const sent=Math.max(0,total-owe), pct=Math.round(sent/total*100);
+    return `<span class="pill" title="Google is rate-limiting invitations; they send automatically — press ↻ to try now" style="padding:3px 10px;background:#EAF3FF;color:#1B5CB8;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:#CDE3FF;z-index:0"></span><span style="position:relative;z-index:1">✉ Sending invites ${sent}/${total}</span></span>`;
+  }
+  if(owe===0&&p.invDoneAt&&Date.now()-p.invDoneAt<48*3600*1000){
+    return `<span class="pill ok" style="padding:3px 10px" title="All queued invitations were delivered">✉ Invites sent ✓</span>`;
+  }
+  return '';
 }
 /* ---- deliver invitations owed from a Google block (user-triggered or sign-in) ---- */
 async function deliverOwed(quiet){
@@ -2224,14 +2274,14 @@ async function cloudRead(){
 }
 async function cloudWrite(){
   const id=await cloudFind();
-  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,dellog:DELLOG,org:ORG,orgName:ORGNAME});
   await gapi.client.request({path:'/upload/drive/v3/files/'+id,method:'PATCH',params:{uploadType:'media'},body:data});
 }
 function adoptCloud(j){
-  PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[];
+  PROJECTS=j.projects||[]; ARCHIVE=j.archive||[]; PEOPLE=j.people||[]; DELLOG=j.dellog||DELLOG||[];
   ORG=j.org||ORG; ORGNAME=j.orgName||ORGNAME; SAVEDAT=j.savedAt||Date.now();
   if(!PROJECTS.some(p=>p.id===selId)) selId=(PROJECTS[0]&&PROJECTS[0].id)||null;
-  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,org:ORG,orgName:ORGNAME});
+  const data=JSON.stringify({v:2,savedAt:SAVEDAT,projects:PROJECTS,archive:ARCHIVE,people:PEOPLE,dellog:DELLOG,org:ORG,orgName:ORGNAME});
   try{ localStorage.setItem('rp_portfolio_v2',data); }catch(e){}
 }
 async function cloudSync(initial){   // pull-or-push depending on who's newer
@@ -2431,12 +2481,28 @@ async function gPoll(){
     try{ r=await gapi.client.calendar.events.list({calendarId:p.gcalId,maxResults:2500,showDeleted:true}); }
     catch(e){ if(e&&e.status===401){ gToken=null; stopPolling(); renderAuth(); } continue; }
     const byId={}; (r.result.items||[]).forEach(ev=>byId[ev.id]=ev);
-    // 1) sync-state per event the app pushed
+    // 1) pull edits + detect Google-side deletions
+    const missing=[];
     Object.entries(p.gmap||{}).forEach(([key,gid])=>{
       const gev=byId[gid];
-      if(!gev){ const f=findByKey(p,key); if(f&&!f.it.gmissing){ f.it.gmissing=true; any=true; } return; }
+      if(!gev||gev.status==='cancelled'){ missing.push(key); return; }
       if(applyPulled(p,key,gev)) any=true;
     });
+    if(missing.length){
+      let removeThem=true;
+      if(missing.length>2){   // bulk deletion in Google: don't silently wipe the plan — ask
+        removeThem=confirm(`${missing.length} [${p.tag}] events were deleted in Google Calendar.\n\nOK = also remove them from the project here (they go to the 🗑 Deleted page)\nCancel = keep them in the app; they will be re-created on the calendar at the next Live sync`);
+      }
+      for(const key of missing){
+        if(removeThem){
+          const f=removeItemByKey(p,key);
+          if(f) logDeletion(p,f.it,f.type,'google');
+        }
+        delete p.gmap[key]; delete (p.gpushed||{})[key]; delete (p.pendInv||{})[key];
+      }
+      any=true;
+      toast(removeThem?`🗑 [${p.tag}] ${missing.length} event(s) deleted in Google — removed here too (see 🗑 Deleted)`:`[${p.tag}] kept ${missing.length} item(s) — switch ⚡ Live (or edit) to re-create them on the calendar`);
+    }
     // 2) ADOPT events created directly in the calendar with this project's [TAG]
     const mappedIds=new Set(Object.values(p.gmap||{}));
     (r.result.items||[]).forEach(gev=>{
